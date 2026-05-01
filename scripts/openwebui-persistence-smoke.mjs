@@ -58,7 +58,8 @@ function buildAssistantMessage({
   modelId,
   timestamp,
   userMessageId,
-  content = ""
+  content = "",
+  done = false
 }) {
   return {
     id: assistantMessageId,
@@ -70,7 +71,7 @@ function buildAssistantMessage({
     model: modelId,
     modelName: modelId,
     modelIdx: 0,
-    done: false
+    done
   };
 }
 
@@ -176,7 +177,8 @@ export function buildCompletedMutation({
     modelId,
     timestamp: Date.now(),
     userMessageId,
-    content: assistantText
+    content: assistantText,
+    done: true
   });
 
   return {

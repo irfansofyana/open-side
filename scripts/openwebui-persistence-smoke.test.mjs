@@ -163,7 +163,8 @@ describe("openwebui persistence smoke payloads", () => {
         id: "assistant-1",
         parentId: "user-1",
         role: "assistant",
-        content: "smoke-ok"
+        content: "smoke-ok",
+        done: true
       }
     });
   });

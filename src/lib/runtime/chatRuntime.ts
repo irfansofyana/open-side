@@ -71,12 +71,14 @@ const defaultIdGenerator = (): string => crypto.randomUUID();
 const buildAssistantMessage = ({
   assistantMessageId,
   content = "",
+  done = false,
   modelId,
   timestamp,
   userMessageId
 }: {
   assistantMessageId: string;
   content?: string;
+  done?: boolean;
   modelId: string;
   timestamp: number;
   userMessageId: string;
@@ -90,7 +92,7 @@ const buildAssistantMessage = ({
   model: modelId,
   modelName: modelId,
   modelIdx: 0,
-  done: false
+  done
 });
 
 const buildInitialChatMutation = ({
@@ -474,6 +476,7 @@ export async function sendPersistedMessage({
     message: buildAssistantMessage({
       assistantMessageId,
       content: assistantText,
+      done: true,
       modelId: payloadInput.modelId,
       timestamp: Math.floor(now() / 1000),
       userMessageId

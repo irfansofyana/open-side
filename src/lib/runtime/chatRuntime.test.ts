@@ -217,7 +217,8 @@ test("sendPersistedMessage creates linked chat, polls persisted text when stream
       model: "openrouter/fast",
       message: expect.objectContaining({
         id: "assistant-1",
-        content: "persisted ok"
+        content: "persisted ok",
+        done: true
       })
     })
   );
