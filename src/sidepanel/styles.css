@@ -23,6 +23,11 @@ button {
   font: inherit;
 }
 
+input,
+select {
+  font: inherit;
+}
+
 .panel-shell {
   display: flex;
   min-height: 100vh;
@@ -73,12 +78,50 @@ h1 {
   line-height: 1.15;
 }
 
-.placeholder-copy {
+.server-name {
   max-width: 28rem;
   margin: 0;
   color: #b9c2cf;
   font-size: 14px;
   line-height: 1.5;
+}
+
+.connection-form {
+  display: grid;
+  gap: 10px;
+}
+
+.field-label {
+  color: #d7dde8;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.field-control {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: #f8fafc;
+  background: rgba(255, 255, 255, 0.06);
+  outline: none;
+}
+
+.field-control:focus {
+  border-color: #7dd3fc;
+  box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.18);
+}
+
+.error-message {
+  margin: 0;
+  border: 1px solid rgba(248, 113, 113, 0.32);
+  border-radius: 6px;
+  padding: 10px;
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.24);
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .primary-action {
@@ -90,4 +133,9 @@ h1 {
   background: #86efac;
   font-size: 14px;
   font-weight: 700;
+}
+
+.primary-action:disabled {
+  cursor: progress;
+  opacity: 0.72;
 }
