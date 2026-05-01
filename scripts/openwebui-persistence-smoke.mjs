@@ -292,6 +292,35 @@ async function requestStream(baseUrl, path, options = {}) {
   return response.body;
 }
 
+export async function fetchModelItem({
+  authHeaders,
+  baseUrl,
+  fallbackModel,
+  modelId,
+  signal
+}) {
+  const path = `/api/v1/models/model?id=${encodeURIComponent(modelId)}`;
+  const response = await fetch(`${baseUrl}${path}`, {
+    headers: authHeaders,
+    signal
+  });
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : undefined;
+
+  if (response.status === 404) {
+    return { modelItem: fallbackModel, source: "models" };
+  }
+
+  if (!response.ok) {
+    throw new Error(`Request failed: ${path} returned HTTP ${response.status}`);
+  }
+
+  return {
+    modelItem: isRecord(data) ? data : fallbackModel,
+    source: isRecord(data) ? "detail" : "models"
+  };
+}
+
 export function extractContentFromData(data) {
   if (data === "[DONE]") {
     return { done: true, content: "" };
@@ -465,15 +494,18 @@ async function main() {
     console.log(`- chat created: ${chatId}`);
     console.log("- assistant placeholder: created with chat");
 
-    const modelItem = await requestJson(
+    const modelItemResult = await fetchModelItem({
+      authHeaders,
       baseUrl,
-      `/api/v1/models/model?id=${encodeURIComponent(modelId)}`,
-      {
-        headers: authHeaders,
-        signal: controller.signal
-      }
+      fallbackModel: selectedModel,
+      modelId,
+      signal: controller.signal
+    });
+    console.log(
+      modelItemResult.source === "detail"
+        ? "- model detail: ok"
+        : "- model detail: unavailable; using model list item"
     );
-    console.log("- model detail: ok");
 
     const userMessage = readChat(initialPayload).history.messages[userMessageId];
     const stream = await requestStream(baseUrl, "/api/chat/completions", {
@@ -487,7 +519,7 @@ async function main() {
           assistantMessageId,
           chatId,
           modelId,
-          modelItem,
+          modelItem: modelItemResult.modelItem,
           prompt,
           sessionId,
           userMessage,

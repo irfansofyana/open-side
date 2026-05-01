@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
   buildAssistantPlaceholderMutation,
@@ -6,9 +6,14 @@ import {
   buildCompletionRequest,
   buildInitialChatMutation,
   extractContentFromData,
+  fetchModelItem,
   findPersistedAssistantText,
   selectAssistantText
 } from "./openwebui-persistence-smoke.mjs";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("openwebui persistence smoke payloads", () => {
   test("buildInitialChatMutation creates a linked user and assistant message tree", () => {
@@ -189,6 +194,64 @@ describe("openwebui persistence smoke payloads", () => {
         tags_generation: false,
         follow_up_generation: false
       }
+    });
+  });
+
+  test("fetchModelItem falls back to selected model when model detail is unavailable", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ detail: "Not found" }), {
+        status: 404,
+        headers: {
+          "content-type": "application/json"
+        }
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      fetchModelItem({
+        authHeaders: { authorization: "Bearer token-1" },
+        baseUrl: "https://openwebui.example.com",
+        fallbackModel: { id: "openrouter/fast", name: "Fast" },
+        modelId: "openrouter/fast"
+      })
+    ).resolves.toEqual({
+      modelItem: { id: "openrouter/fast", name: "Fast" },
+      source: "models"
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://openwebui.example.com/api/v1/models/model?id=openrouter%2Ffast",
+      {
+        headers: { authorization: "Bearer token-1" },
+        signal: undefined
+      }
+    );
+  });
+
+  test("fetchModelItem prefers model detail when available", async () => {
+    const detail = { id: "openrouter/fast", name: "Fast detail", info: { owned_by: "test" } };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify(detail), {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        })
+      )
+    );
+
+    await expect(
+      fetchModelItem({
+        authHeaders: { authorization: "Bearer token-1" },
+        baseUrl: "https://openwebui.example.com",
+        fallbackModel: { id: "openrouter/fast", name: "Fast" },
+        modelId: "openrouter/fast"
+      })
+    ).resolves.toEqual({
+      modelItem: detail,
+      source: "detail"
     });
   });
 
