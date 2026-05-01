@@ -2,7 +2,10 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { App } from "./App";
-import type { ConnectToServerResult } from "../lib/runtime/connectionRuntime";
+import type {
+  ConnectToServerResult,
+  RestoreSavedConnectionResult
+} from "../lib/runtime/connectionRuntime";
 
 const connectionResult: ConnectToServerResult = {
   server: {
@@ -35,6 +38,45 @@ test("default connection form renders", () => {
   expect(screen.getByLabelText("Email or username")).toBeInTheDocument();
   expect(screen.getByLabelText("Password")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Connect" })).toBeInTheDocument();
+});
+
+test("saved session restores ready state without asking for credentials", async () => {
+  const restoreConnection = vi.fn<() => Promise<RestoreSavedConnectionResult>>().mockResolvedValue({
+    status: "ready",
+    connection: connectionResult,
+    selectedModelId: "mistral"
+  });
+
+  render(<App restoreConnection={restoreConnection} />);
+
+  expect(await screen.findByRole("heading", { name: "Ready" })).toBeInTheDocument();
+  expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Model")).toHaveValue("mistral");
+});
+
+test("expired saved session prefills server and email and can forget the saved server", async () => {
+  const restoreConnection = vi.fn<() => Promise<RestoreSavedConnectionResult>>().mockResolvedValue({
+    status: "loginRequired",
+    server: connectionResult.server,
+    email: "ada@example.com",
+    message: "Open WebUI session expired. Please log in again."
+  });
+  const forgetSavedServer = vi.fn(async () => undefined);
+
+  render(<App restoreConnection={restoreConnection} forgetSavedServer={forgetSavedServer} />);
+
+  expect(await screen.findByLabelText("Server URL")).toHaveValue("https://openwebui.example.com");
+  expect(screen.getByLabelText("Email or username")).toHaveValue("ada@example.com");
+  expect(screen.getByLabelText("Password")).toHaveValue("");
+  expect(screen.getByRole("alert")).toHaveTextContent("Open WebUI session expired");
+
+  fireEvent.click(screen.getByRole("button", { name: "Forget saved server" }));
+
+  await waitFor(() => {
+    expect(forgetSavedServer).toHaveBeenCalledWith("server-openwebui-example-com");
+  });
+  expect(screen.getByLabelText("Server URL")).toHaveValue("");
+  expect(screen.getByLabelText("Email or username")).toHaveValue("");
 });
 
 test("successful submit calls connect function with form values and renders ready state/models", async () => {

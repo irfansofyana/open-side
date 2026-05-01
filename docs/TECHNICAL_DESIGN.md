@@ -150,7 +150,10 @@ Rules:
 
 - never persist password
 - store token only after successful sign-in
-- clear token and cached server data on logout
+- on side-panel startup, read `uiState.activeServerId`, restore the saved server URL, and validate the stored token with `/api/v1/auths/` plus model loading before entering the ready state
+- if stored token validation fails or `expiresAt` has passed, keep the saved server URL and known user email available on the login form, but require password re-entry
+- provide a forget-saved-server action that removes the server record, session, preferences, and active UI state
+- clear token and cached server data on logout or explicit forget
 - keep token out of logs, errors, and UI debug output
 - do not expose token to content scripts
 

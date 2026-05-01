@@ -2,6 +2,7 @@ import { setChromeStorageData } from "../../test/chromeMock";
 import { defaultFeatureFlags } from "../openwebui/types";
 import {
   clearServerSession,
+  forgetServerConnection,
   getExtensionStorage,
   saveServerConnection
 } from "./storage";
@@ -210,6 +211,39 @@ test("clearServerSession preserves ui state when clearing an inactive server", a
   expect(stored.uiState).toEqual({
     activeServerId: server.id,
     activeChatId: "chat-1"
+  });
+});
+
+test("forgetServerConnection removes server, session, preferences, and active ui state", async () => {
+  setChromeStorageData({
+    extensionStorage: {
+      serversById: {
+        [server.id]: server
+      },
+      sessionsByServerId: {
+        [server.id]: session
+      },
+      preferencesByServerId: {
+        [server.id]: {
+          serverId: server.id,
+          enabledToolIds: [],
+          enabledFeatures: defaultFeatureFlags
+        }
+      },
+      uiState: {
+        activeServerId: server.id,
+        activeChatId: "chat-1"
+      }
+    }
+  });
+
+  const stored = await forgetServerConnection(server.id);
+
+  expect(stored).toEqual({
+    serversById: {},
+    sessionsByServerId: {},
+    preferencesByServerId: {},
+    uiState: {}
   });
 });
 

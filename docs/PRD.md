@@ -62,7 +62,7 @@ Flow:
 
 The extension must not store the user's password.
 
-If the token expires or becomes invalid, the extension asks the user to log in again.
+When the user reopens the side panel, the extension should restore the active saved server and reuse the stored token for as long as the Open WebUI server accepts it. If the token expires or becomes invalid, the extension asks the user to log in again while keeping the saved server URL and known email or username prefilled. The user must be able to forget the saved server, which removes its URL, session token, preferences, and active UI state from extension storage.
 
 ### Chat History
 
@@ -174,6 +174,9 @@ The UI should feel natural at common side panel widths around 320-480px. It may 
 Success criteria:
 
 - successful login stores token and server URL
+- reopening the extension restores the saved active server without asking for credentials when the token is still valid
+- expired or invalid sessions keep the saved server URL available and require only re-login
+- user can forget the saved server URL and session data
 - password is not persisted
 - errors identify connection, auth, or server compatibility problems clearly
 
@@ -359,6 +362,9 @@ The MVP is complete when:
 - User can open the Chrome side panel.
 - User can connect to one Open WebUI server with local email/password.
 - Password is not stored after login.
+- Reopening the side panel restores the saved server/session when the token remains valid.
+- Expired or invalid sessions prefill saved server URL and known email or username, but require password re-entry.
+- User can forget a saved server and remove its stored session/preferences.
 - User can see available models from the server.
 - User can select a model.
 - User can start a new server-side chat.

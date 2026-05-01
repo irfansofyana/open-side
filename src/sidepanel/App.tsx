@@ -1,9 +1,12 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
+import { forgetServerConnection } from "../lib/chrome/storage";
 import { OpenWebUIClient } from "../lib/openwebui/client";
 import type { ChatTree, OpenWebUIModel } from "../lib/openwebui/types";
 import {
   connectToServer,
+  restoreSavedConnection,
+  type RestoreSavedConnectionResult,
   type ConnectToServerResult
 } from "../lib/runtime/connectionRuntime";
 import {
@@ -17,6 +20,8 @@ type AppProps = {
     email: string;
     password: string;
   }) => Promise<ConnectToServerResult>;
+  forgetSavedServer?: (serverId: string) => Promise<unknown>;
+  restoreConnection?: () => Promise<RestoreSavedConnectionResult>;
   sendMessage?: (input: AppSendMessageInput) => Promise<SendPersistedMessageResult>;
 };
 
@@ -61,7 +66,12 @@ const defaultSendMessage = ({
   });
 };
 
-export function App({ connect = connectToServer, sendMessage = defaultSendMessage }: AppProps) {
+export function App({
+  connect = connectToServer,
+  forgetSavedServer = forgetServerConnection,
+  restoreConnection = restoreSavedConnection,
+  sendMessage = defaultSendMessage
+}: AppProps) {
   const [serverUrl, setServerUrl] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -73,6 +83,54 @@ export function App({ connect = connectToServer, sendMessage = defaultSendMessag
   const [connection, setConnection] = useState<ConnectToServerResult>();
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [activeChat, setActiveChat] = useState<ChatTree>();
+  const [savedServerId, setSavedServerId] = useState<string>();
+
+  useEffect(() => {
+    let isMounted = true;
+
+    restoreConnection()
+      .then((result) => {
+        if (!isMounted) {
+          return;
+        }
+
+        if (result.status === "ready") {
+          const preferredModelExists = result.connection.models.some(
+            (model) => model.id === result.selectedModelId
+          );
+
+          setConnection(result.connection);
+          setServerUrl(result.connection.server.baseUrl);
+          setEmail(result.connection.session.user.email ?? "");
+          setPassword("");
+          setSelectedModelId(
+            preferredModelExists
+              ? result.selectedModelId ?? ""
+              : result.connection.models[0]?.id ?? ""
+          );
+          setSavedServerId(result.connection.server.id);
+          setErrorMessage(undefined);
+          return;
+        }
+
+        if (result.status === "loginRequired") {
+          setServerUrl(result.server.baseUrl);
+          setEmail(result.email ?? "");
+          setPassword("");
+          setSavedServerId(result.server.id);
+          setErrorMessage(result.message);
+        }
+      })
+      .catch((error) => {
+        if (isMounted) {
+          setErrorMessage(getErrorMessage(error));
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [restoreConnection]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -83,6 +141,7 @@ export function App({ connect = connectToServer, sendMessage = defaultSendMessag
       const result = await connect({ serverUrl, email, password });
       setConnection(result);
       setSelectedModelId(result.models[0]?.id ?? "");
+      setSavedServerId(result.server.id);
       setActiveChat(undefined);
       setChatMessages([]);
       setPassword("");
@@ -149,6 +208,19 @@ export function App({ connect = connectToServer, sendMessage = defaultSendMessag
   const handleNewChat = () => {
     setActiveChat(undefined);
     setChatMessages([]);
+    setErrorMessage(undefined);
+  };
+
+  const handleForgetSavedServer = async () => {
+    if (!savedServerId) {
+      return;
+    }
+
+    await forgetSavedServer(savedServerId);
+    setSavedServerId(undefined);
+    setServerUrl("");
+    setEmail("");
+    setPassword("");
     setErrorMessage(undefined);
   };
 
@@ -280,6 +352,16 @@ export function App({ connect = connectToServer, sendMessage = defaultSendMessag
               <p className="error-message" role="alert">
                 {errorMessage}
               </p>
+            ) : null}
+
+            {savedServerId ? (
+              <button
+                className="secondary-action"
+                onClick={handleForgetSavedServer}
+                type="button"
+              >
+                Forget saved server
+              </button>
             ) : null}
 
             <button type="submit" className="primary-action" disabled={isConnecting}>

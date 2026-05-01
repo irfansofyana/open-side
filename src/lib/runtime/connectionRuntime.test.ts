@@ -1,6 +1,15 @@
-import { getChromeStorageData } from "../../test/chromeMock";
-import { OpenWebUIError, type OpenWebUIModel, type OpenWebUIUser } from "../openwebui/types";
-import { connectToServer, type OpenWebUIConnectionClient } from "./connectionRuntime";
+import { getChromeStorageData, setChromeStorageData } from "../../test/chromeMock";
+import {
+  defaultFeatureFlags,
+  OpenWebUIError,
+  type OpenWebUIModel,
+  type OpenWebUIUser
+} from "../openwebui/types";
+import {
+  connectToServer,
+  restoreSavedConnection,
+  type OpenWebUIConnectionClient
+} from "./connectionRuntime";
 
 const now = () => new Date("2026-05-01T02:03:04.000Z");
 
@@ -187,5 +196,149 @@ test("server id sanitizes host and port predictably", async () => {
   expect(result.server).toMatchObject({
     id: "server-localhost-3000",
     displayName: "localhost:3000"
+  });
+});
+
+test("restoreSavedConnection reuses active stored token and returns models", async () => {
+  const server = {
+    id: "server-openwebui-example-com",
+    baseUrl: "https://openwebui.example.com",
+    displayName: "openwebui.example.com",
+    createdAt: "2026-05-01T01:00:00.000Z",
+    lastConnectedAt: "2026-05-01T01:00:00.000Z"
+  };
+  const session = {
+    serverId: server.id,
+    token: "stored-token",
+    tokenType: "Bearer" as const,
+    user: { id: "old-user", email: "ada@example.com" }
+  };
+  const models = [{ id: "llama3.1" }, { id: "mistral", name: "Mistral" }];
+  const observedTokens: string[] = [];
+  const clientFactory = vi.fn(({ getToken }: ClientFactoryOptions) => ({
+    probeConfig: vi.fn(),
+    signIn: vi.fn(),
+    getCurrentUser: vi.fn(async () => {
+      observedTokens.push((await getToken()) ?? "");
+      return { id: "user-1", email: "ada@example.com", name: "Ada" };
+    }),
+    getModels: vi.fn(async () => {
+      observedTokens.push((await getToken()) ?? "");
+      return models;
+    })
+  }));
+  setChromeStorageData({
+    extensionStorage: {
+      serversById: { [server.id]: server },
+      sessionsByServerId: { [server.id]: session },
+      preferencesByServerId: {
+        [server.id]: {
+          serverId: server.id,
+          selectedModelId: "mistral",
+          enabledToolIds: [],
+          enabledFeatures: defaultFeatureFlags
+        }
+      },
+      uiState: { activeServerId: server.id }
+    }
+  });
+
+  await expect(
+    restoreSavedConnection({
+      clientFactory,
+      now
+    })
+  ).resolves.toEqual({
+    status: "ready",
+    connection: {
+      server: {
+        ...server,
+        lastConnectedAt: "2026-05-01T02:03:04.000Z"
+      },
+      session: {
+        ...session,
+        user: { id: "user-1", email: "ada@example.com", name: "Ada" }
+      },
+      models
+    },
+    selectedModelId: "mistral"
+  });
+  expect(clientFactory).toHaveBeenCalledWith({
+    baseUrl: "https://openwebui.example.com",
+    getToken: expect.any(Function)
+  });
+  expect(observedTokens).toEqual(["stored-token", "stored-token"]);
+});
+
+test("restoreSavedConnection keeps server and email when token is expired", async () => {
+  const server = {
+    id: "server-openwebui-example-com",
+    baseUrl: "https://openwebui.example.com",
+    displayName: "openwebui.example.com",
+    createdAt: "2026-05-01T01:00:00.000Z",
+    lastConnectedAt: "2026-05-01T01:00:00.000Z"
+  };
+  setChromeStorageData({
+    extensionStorage: {
+      serversById: { [server.id]: server },
+      sessionsByServerId: {
+        [server.id]: {
+          serverId: server.id,
+          token: "expired-token",
+          tokenType: "Bearer",
+          expiresAt: "2026-04-30T01:00:00.000Z",
+          user: { email: "ada@example.com" }
+        }
+      },
+      preferencesByServerId: {},
+      uiState: { activeServerId: server.id }
+    }
+  });
+
+  await expect(restoreSavedConnection({ now })).resolves.toEqual({
+    status: "loginRequired",
+    server,
+    email: "ada@example.com",
+    message: "Open WebUI session expired. Please log in again."
+  });
+});
+
+test("restoreSavedConnection keeps saved server when token validation cannot reach server", async () => {
+  const server = {
+    id: "server-openwebui-example-com",
+    baseUrl: "https://openwebui.example.com",
+    displayName: "openwebui.example.com",
+    createdAt: "2026-05-01T01:00:00.000Z",
+    lastConnectedAt: "2026-05-01T01:00:00.000Z"
+  };
+  const clientFactory = vi.fn(() => ({
+    probeConfig: vi.fn(),
+    signIn: vi.fn(),
+    getCurrentUser: vi.fn(async () => {
+      throw new OpenWebUIError("ServerUnreachableError", "Unable to reach Open WebUI server");
+    }),
+    getModels: vi.fn()
+  }));
+  setChromeStorageData({
+    extensionStorage: {
+      serversById: { [server.id]: server },
+      sessionsByServerId: {
+        [server.id]: {
+          serverId: server.id,
+          token: "stored-token",
+          tokenType: "Bearer",
+          user: { email: "ada@example.com" }
+        }
+      },
+      preferencesByServerId: {},
+      uiState: { activeServerId: server.id }
+    }
+  });
+
+  await expect(restoreSavedConnection({ clientFactory, now })).resolves.toEqual({
+    status: "loginRequired",
+    server,
+    email: "ada@example.com",
+    message: "Unable to reach Open WebUI server"
   });
 });

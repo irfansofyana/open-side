@@ -1,5 +1,5 @@
 import { requestServerOriginPermission } from "../chrome/permissions";
-import { saveServerConnection } from "../chrome/storage";
+import { getExtensionStorage, saveServerConnection } from "../chrome/storage";
 import { OpenWebUIClient, normalizeBaseUrl } from "../openwebui/client";
 import {
   OpenWebUIError,
@@ -23,6 +23,22 @@ export type ConnectToServerResult = {
   session: SessionRecord;
   models: OpenWebUIModel[];
 };
+
+export type RestoreSavedConnectionResult =
+  | {
+      status: "empty";
+    }
+  | {
+      status: "loginRequired";
+      server: ServerRecord;
+      email?: string;
+      message?: string;
+    }
+  | {
+      status: "ready";
+      connection: ConnectToServerResult;
+      selectedModelId?: string;
+    };
 
 export type OpenWebUIConnectionClient = {
   probeConfig: () => Promise<Record<string, unknown>>;
@@ -94,4 +110,86 @@ export const connectToServer = async ({
   await saveServerConnection({ server, session });
 
   return { server, session, models };
+};
+
+export const restoreSavedConnection = async ({
+  now = () => new Date(),
+  clientFactory = defaultClientFactory
+}: {
+  now?: () => Date;
+  clientFactory?: OpenWebUIConnectionClientFactory;
+} = {}): Promise<RestoreSavedConnectionResult> => {
+  const storage = await getExtensionStorage();
+  const activeServerId = storage.uiState.activeServerId;
+  const server = activeServerId
+    ? storage.serversById[activeServerId]
+    : Object.values(storage.serversById)[0];
+
+  if (!server) {
+    return { status: "empty" };
+  }
+
+  const session = storage.sessionsByServerId[server.id];
+  const email = typeof session?.user.email === "string" ? session.user.email : undefined;
+
+  if (!session) {
+    return {
+      status: "loginRequired",
+      server,
+      email
+    };
+  }
+
+  if (session.expiresAt && Date.parse(session.expiresAt) <= now().getTime()) {
+    return {
+      status: "loginRequired",
+      server,
+      email,
+      message: "Open WebUI session expired. Please log in again."
+    };
+  }
+
+  const client = clientFactory({
+    baseUrl: server.baseUrl,
+    getToken: () => session.token
+  });
+
+  try {
+    const user = await client.getCurrentUser();
+    const models = await client.getModels();
+    const nextServer = {
+      ...server,
+      lastConnectedAt: now().toISOString()
+    };
+    const nextSession = {
+      ...session,
+      user
+    };
+
+    await saveServerConnection({ server: nextServer, session: nextSession });
+
+    return {
+      status: "ready",
+      connection: {
+        server: nextServer,
+        session: nextSession,
+        models
+      },
+      selectedModelId: storage.preferencesByServerId[server.id]?.selectedModelId
+    };
+  } catch (error) {
+    if (error instanceof OpenWebUIError) {
+      return {
+        status: "loginRequired",
+        server,
+        email,
+        message:
+          error.code === "TokenExpiredError"
+            ? "Open WebUI session expired. Please log in again."
+            : error.message
+      };
+    }
+
+    throw error;
+  }
 };

@@ -157,3 +157,27 @@ export const clearServerSession = async (serverId: string): Promise<ExtensionSto
 
   return persistExtensionStorage(nextStorage);
 };
+
+export const forgetServerConnection = async (serverId: string): Promise<ExtensionStorage> => {
+  const storage = await getExtensionStorage();
+  const { [serverId]: _removedServer, ...serversById } = storage.serversById;
+  const { [serverId]: _removedSession, ...sessionsByServerId } = storage.sessionsByServerId;
+  const { [serverId]: _removedPreferences, ...preferencesByServerId } = storage.preferencesByServerId;
+  const { activeServerId, activeChatId, ...otherUiState } = storage.uiState;
+  const clearsActiveServer = activeServerId === serverId;
+
+  const nextStorage: ExtensionStorage = {
+    serversById,
+    sessionsByServerId,
+    preferencesByServerId,
+    uiState: clearsActiveServer
+      ? otherUiState
+      : {
+          ...otherUiState,
+          activeServerId,
+          activeChatId
+        }
+  };
+
+  return persistExtensionStorage(nextStorage);
+};
