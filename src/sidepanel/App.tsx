@@ -1,13 +1,14 @@
 import { useState, type FormEvent } from "react";
 
 import { OpenWebUIClient } from "../lib/openwebui/client";
+import type { OpenWebUIModel } from "../lib/openwebui/types";
 import {
   connectToServer,
   type ConnectToServerResult
 } from "../lib/runtime/connectionRuntime";
 import {
-  sendStreamingMessage,
-  type SendStreamingMessageResult
+  sendPersistedMessage,
+  type SendPersistedMessageResult
 } from "../lib/runtime/chatRuntime";
 
 type AppProps = {
@@ -16,14 +17,14 @@ type AppProps = {
     email: string;
     password: string;
   }) => Promise<ConnectToServerResult>;
-  sendMessage?: (input: AppSendMessageInput) => Promise<SendStreamingMessageResult>;
+  sendMessage?: (input: AppSendMessageInput) => Promise<SendPersistedMessageResult>;
 };
 
 type AppSendMessageInput = {
   connection: ConnectToServerResult;
   modelId: string;
+  modelItem: OpenWebUIModel;
   prompt: string;
-  previousMessages: Array<Record<string, unknown>>;
   onContent: (content: string) => void;
 };
 
@@ -38,21 +39,21 @@ const getErrorMessage = (error: unknown): string =>
 
 const defaultSendMessage = ({
   connection,
+  modelItem,
   modelId,
   prompt,
-  previousMessages,
   onContent
-}: AppSendMessageInput): Promise<SendStreamingMessageResult> => {
+}: AppSendMessageInput): Promise<SendPersistedMessageResult> => {
   const client = new OpenWebUIClient({
     baseUrl: connection.server.baseUrl,
     getToken: () => connection.session.token
   });
 
-  return sendStreamingMessage({
+  return sendPersistedMessage({
     client,
+    modelItem,
     modelId,
     prompt,
-    previousMessages,
     onContent
   });
 };
@@ -95,10 +96,8 @@ export function App({ connect = connectToServer, sendMessage = defaultSendMessag
 
     const nextPrompt = prompt;
     const assistantId = `assistant-${Date.now()}`;
-    const previousMessages = chatMessages.map((message) => ({
-      role: message.role,
-      content: message.content
-    }));
+    const modelItem =
+      connection.models.find((model) => model.id === selectedModelId) ?? { id: selectedModelId };
 
     setPrompt("");
     setErrorMessage(undefined);
@@ -112,9 +111,9 @@ export function App({ connect = connectToServer, sendMessage = defaultSendMessag
     try {
       const result = await sendMessage({
         connection,
+        modelItem,
         modelId: selectedModelId,
         prompt: nextPrompt,
-        previousMessages,
         onContent: (content) => {
           setChatMessages((messages) =>
             messages.map((message) =>

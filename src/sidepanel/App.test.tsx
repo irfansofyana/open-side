@@ -92,7 +92,15 @@ test("connected user can send a prompt and see streamed assistant text", async (
   const sendMessage = vi.fn(async ({ onContent }) => {
     onContent("Hello ");
     onContent("from Open WebUI");
-    return { assistantText: "Hello from Open WebUI" };
+    return {
+      assistantText: "Hello from Open WebUI",
+      chatId: "chat-1",
+      refreshedChat: {
+        id: "chat-1",
+        title: "Say hello",
+        messages: {}
+      }
+    };
   });
 
   render(<App connect={connect} sendMessage={sendMessage} />);
@@ -118,11 +126,13 @@ test("connected user can send a prompt and see streamed assistant text", async (
   await waitFor(() => {
     expect(sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
+        modelItem: { id: "llama3.1", name: "Llama 3.1" },
         modelId: "llama3.1",
         prompt: "Say hello"
       })
     );
   });
+  expect(sendMessage.mock.calls[0]?.[0]).not.toHaveProperty("previousMessages");
   expect(screen.getByText("Say hello")).toBeInTheDocument();
   expect(await screen.findByText("Hello from Open WebUI")).toBeInTheDocument();
   expect(screen.getByLabelText("Message")).toHaveValue("");
