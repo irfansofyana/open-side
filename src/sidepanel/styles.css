@@ -1,0 +1,93 @@
+:root {
+  color: #eef2ff;
+  background: #101214;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 280px;
+  min-height: 100vh;
+  margin: 0;
+  background:
+    linear-gradient(180deg, rgba(60, 76, 94, 0.22), transparent 34%),
+    #101214;
+}
+
+button {
+  font: inherit;
+}
+
+.panel-shell {
+  display: flex;
+  min-height: 100vh;
+  flex-direction: column;
+}
+
+.top-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 0 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(16, 18, 20, 0.82);
+}
+
+.brand-mark {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  background: linear-gradient(135deg, #7dd3fc, #86efac);
+}
+
+.brand-name {
+  color: #f8fafc;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.connection-panel {
+  display: grid;
+  gap: 12px;
+  padding: 24px 16px;
+}
+
+.eyebrow {
+  margin: 0;
+  color: #9aa4b2;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 24px;
+  line-height: 1.15;
+}
+
+.placeholder-copy {
+  max-width: 28rem;
+  margin: 0;
+  color: #b9c2cf;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.primary-action {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  color: #101214;
+  background: #86efac;
+  font-size: 14px;
+  font-weight: 700;
+}

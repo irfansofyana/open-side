@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Open WebUI",
+  "version": "0.1.0",
+  "description": "Open WebUI Chrome extension shell.",
+  "permissions": ["sidePanel", "storage", "activeTab", "scripting", "tabs"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "background": {
+    "service_worker": "background/serviceWorker.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "src/sidepanel/index.html"
+  },
+  "action": {
+    "default_title": "Open WebUI"
+  }
+}
