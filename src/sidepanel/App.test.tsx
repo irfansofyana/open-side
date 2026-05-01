@@ -89,15 +89,20 @@ test("failed submit renders error message", async () => {
 
 test("connected user can send a prompt and see streamed assistant text", async () => {
   const connect = vi.fn().mockResolvedValue(connectionResult);
-  const sendMessage = vi.fn(async ({ onContent }) => {
+  const sendMessage = vi.fn(async ({ onContent, prompt }) => {
     onContent("Hello ");
     onContent("from Open WebUI");
     return {
-      assistantText: "Hello from Open WebUI",
-      chatId: "chat-1",
+      assistantText:
+        prompt === "Say hello"
+          ? "Hello from Open WebUI"
+          : prompt === "Follow up"
+            ? "Second answer"
+            : "Fresh answer",
+      chatId: prompt === "Fresh start" ? "chat-2" : "chat-1",
       refreshedChat: {
-        id: "chat-1",
-        title: "Say hello",
+        id: prompt === "Fresh start" ? "chat-2" : "chat-1",
+        title: "Active chat",
         messages: {}
       }
     };
@@ -136,4 +141,57 @@ test("connected user can send a prompt and see streamed assistant text", async (
   expect(screen.getByText("Say hello")).toBeInTheDocument();
   expect(await screen.findByText("Hello from Open WebUI")).toBeInTheDocument();
   expect(screen.getByLabelText("Message")).toHaveValue("");
+
+  fireEvent.change(screen.getByLabelText("Message"), {
+    target: { value: "Follow up" }
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+  await waitFor(() => {
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+  });
+  expect(sendMessage.mock.calls[1]?.[0]).toEqual(
+    expect.objectContaining({
+      activeChat: expect.objectContaining({ id: "chat-1" }),
+      prompt: "Follow up"
+    })
+  );
+  expect(await screen.findByText("Second answer")).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("Model"), {
+    target: { value: "mistral" }
+  });
+  fireEvent.change(screen.getByLabelText("Message"), {
+    target: { value: "Same chat, new model" }
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+  await waitFor(() => {
+    expect(sendMessage).toHaveBeenCalledTimes(3);
+  });
+  expect(sendMessage.mock.calls[2]?.[0]).toEqual(
+    expect.objectContaining({
+      activeChat: expect.objectContaining({ id: "chat-1" }),
+      modelId: "mistral",
+      modelItem: { id: "mistral" },
+      prompt: "Same chat, new model"
+    })
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+  expect(screen.queryByText("Say hello")).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Message"), {
+    target: { value: "Fresh start" }
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+  await waitFor(() => {
+    expect(sendMessage).toHaveBeenCalledTimes(4);
+  });
+  expect(sendMessage.mock.calls[3]?.[0]).toEqual(
+    expect.not.objectContaining({
+      activeChat: expect.anything()
+    })
+  );
+  expect(await screen.findByText("Fresh answer")).toBeInTheDocument();
 });

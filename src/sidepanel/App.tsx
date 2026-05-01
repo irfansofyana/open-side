@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 
 import { OpenWebUIClient } from "../lib/openwebui/client";
-import type { OpenWebUIModel } from "../lib/openwebui/types";
+import type { ChatTree, OpenWebUIModel } from "../lib/openwebui/types";
 import {
   connectToServer,
   type ConnectToServerResult
@@ -21,6 +21,7 @@ type AppProps = {
 };
 
 type AppSendMessageInput = {
+  activeChat?: ChatTree;
   connection: ConnectToServerResult;
   modelId: string;
   modelItem: OpenWebUIModel;
@@ -38,6 +39,7 @@ const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : "Unable to connect";
 
 const defaultSendMessage = ({
+  activeChat,
   connection,
   modelItem,
   modelId,
@@ -50,6 +52,7 @@ const defaultSendMessage = ({
   });
 
   return sendPersistedMessage({
+    activeChat,
     client,
     modelItem,
     modelId,
@@ -69,6 +72,7 @@ export function App({ connect = connectToServer, sendMessage = defaultSendMessag
   const [errorMessage, setErrorMessage] = useState<string>();
   const [connection, setConnection] = useState<ConnectToServerResult>();
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [activeChat, setActiveChat] = useState<ChatTree>();
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -79,6 +83,8 @@ export function App({ connect = connectToServer, sendMessage = defaultSendMessag
       const result = await connect({ serverUrl, email, password });
       setConnection(result);
       setSelectedModelId(result.models[0]?.id ?? "");
+      setActiveChat(undefined);
+      setChatMessages([]);
       setPassword("");
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
@@ -110,6 +116,7 @@ export function App({ connect = connectToServer, sendMessage = defaultSendMessag
 
     try {
       const result = await sendMessage({
+        activeChat,
         connection,
         modelItem,
         modelId: selectedModelId,
@@ -130,12 +137,19 @@ export function App({ connect = connectToServer, sendMessage = defaultSendMessag
           message.id === assistantId ? { ...message, content: result.assistantText } : message
         )
       );
+      setActiveChat(result.refreshedChat);
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setChatMessages((messages) => messages.filter((message) => message.id !== assistantId));
     } finally {
       setIsSending(false);
     }
+  };
+
+  const handleNewChat = () => {
+    setActiveChat(undefined);
+    setChatMessages([]);
+    setErrorMessage(undefined);
   };
 
   return (
@@ -154,19 +168,29 @@ export function App({ connect = connectToServer, sendMessage = defaultSendMessag
             <label className="field-label" htmlFor="model">
               Model
             </label>
-            <select
-              className="field-control"
-              id="model"
-              name="model"
-              onChange={(event) => setSelectedModelId(event.target.value)}
-              value={selectedModelId}
-            >
-              {connection.models.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.name ?? model.id}
-                </option>
-              ))}
-            </select>
+            <div className="chat-controls">
+              <select
+                className="field-control"
+                id="model"
+                name="model"
+                onChange={(event) => setSelectedModelId(event.target.value)}
+                value={selectedModelId}
+              >
+                {connection.models.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.name ?? model.id}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="secondary-action"
+                disabled={isSending}
+                onClick={handleNewChat}
+                type="button"
+              >
+                New chat
+              </button>
+            </div>
 
             <div className="message-list" aria-live="polite">
               {chatMessages.map((message) => (

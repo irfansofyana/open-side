@@ -17,6 +17,7 @@ type StreamingClient = {
 
 type PersistedChatClient = StreamingClient & {
   createChat: (payload: ChatMutationPayload) => Promise<ChatMutationResult>;
+  updateChat: (chatId: string, payload: ChatMutationPayload) => Promise<ChatMutationResult>;
   completeChat: (payload: ChatMutationPayload) => Promise<ChatMutationResult>;
   getChat: (chatId: string) => Promise<ChatTree>;
 };
@@ -43,6 +44,7 @@ export type SendPersistedMessageInput = Omit<
   BuildCompletionPayloadInput,
   "assistantMessageId" | "chatId" | "messages" | "parentId" | "sessionId" | "userMessage"
 > & {
+  activeChat?: ChatTree;
   client: PersistedChatClient;
   prompt: string;
   title?: string;
@@ -144,6 +146,136 @@ const buildInitialChatMutation = ({
   };
 };
 
+const appendChildId = (message: Record<string, unknown>, childId: string): Record<string, unknown> => {
+  const childrenIds = Array.isArray(message.childrenIds)
+    ? message.childrenIds.filter((value): value is string => typeof value === "string")
+    : [];
+
+  return {
+    ...message,
+    childrenIds: childrenIds.includes(childId) ? childrenIds : [...childrenIds, childId]
+  };
+};
+
+const getRawChat = (chat: ChatTree): Record<string, unknown> => {
+  if (isRecord(chat.raw?.chat)) {
+    return chat.raw.chat;
+  }
+
+  return {
+    title: chat.title,
+    currentId: chat.currentId,
+    messages: Object.values(chat.messages).filter(isRecord),
+    history: {
+      currentId: chat.currentId,
+      messages: chat.messages
+    }
+  };
+};
+
+const getMessageContent = (message: Record<string, unknown>): string | undefined =>
+  typeof message.content === "string" ? message.content : undefined;
+
+const toCompletionMessages = (
+  messages: Array<Record<string, unknown>>,
+  prompt: string
+): Array<Record<string, unknown>> => [
+  ...messages.flatMap((message) => {
+    const role = typeof message.role === "string" ? message.role : undefined;
+    const content = getMessageContent(message);
+
+    return role && content !== undefined ? [{ role, content }] : [];
+  }),
+  { role: "user", content: prompt }
+];
+
+const buildContinuationChatMutation = ({
+  activeChat,
+  assistantMessageId,
+  modelId,
+  prompt,
+  timestamp,
+  userMessageId
+}: {
+  activeChat: ChatTree;
+  assistantMessageId: string;
+  modelId: string;
+  prompt: string;
+  timestamp: number;
+  userMessageId: string;
+}): {
+  chatId: string;
+  messages: Array<Record<string, unknown>>;
+  parentId: string;
+  payload: ChatMutationPayload;
+  userMessage: Record<string, unknown>;
+} => {
+  const currentChat = getRawChat(activeChat);
+  const history = isRecord(currentChat.history) ? currentChat.history : {};
+  const historyMessages = isRecord(history.messages) ? history.messages : activeChat.messages;
+  const existingMessages = Array.isArray(currentChat.messages)
+    ? currentChat.messages.filter(isRecord)
+    : Object.values(historyMessages).filter(isRecord);
+  const parentId =
+    typeof currentChat.currentId === "string"
+      ? currentChat.currentId
+      : typeof history.currentId === "string"
+        ? history.currentId
+        : activeChat.currentId;
+  const userMessage = {
+    id: userMessageId,
+    parentId,
+    role: "user",
+    content: prompt,
+    timestamp,
+    models: [modelId],
+    childrenIds: [assistantMessageId]
+  };
+  const assistantMessage = buildAssistantMessage({
+    assistantMessageId,
+    modelId,
+    timestamp: timestamp + 1,
+    userMessageId
+  });
+  const nextMessages = existingMessages.map((message) =>
+    message.id === parentId ? appendChildId(message, userMessageId) : message
+  );
+  const nextHistoryMessages: Record<string, unknown> = { ...historyMessages };
+  const parentMessage = parentId ? nextHistoryMessages[parentId] : undefined;
+
+  if (parentId && isRecord(parentMessage)) {
+    nextHistoryMessages[parentId] = appendChildId(parentMessage, userMessageId);
+  }
+
+  return {
+    chatId: activeChat.id,
+    messages: toCompletionMessages(existingMessages, prompt),
+    parentId: userMessageId,
+    payload: {
+      chat: {
+        ...currentChat,
+        title:
+          typeof currentChat.title === "string" && currentChat.title.length > 0
+            ? currentChat.title
+            : activeChat.title,
+        models: Array.isArray(currentChat.models) ? currentChat.models : [modelId],
+        currentId: assistantMessageId,
+        messages: [...nextMessages, userMessage, assistantMessage],
+        history: {
+          ...history,
+          currentId: assistantMessageId,
+          messages: {
+            ...nextHistoryMessages,
+            [userMessageId]: userMessage,
+            [assistantMessageId]: assistantMessage
+          }
+        }
+      }
+    },
+    userMessage
+  };
+};
+
 const getCreatedChatId = (value: ChatMutationResult): string => {
   const chat = isRecord(value.chat) ? value.chat : undefined;
   const id = value.id ?? chat?.id;
@@ -232,6 +364,7 @@ export async function sendStreamingMessage({
 }
 
 export async function sendPersistedMessage({
+  activeChat,
   client,
   delay = defaultDelay,
   idGenerator = defaultIdGenerator,
@@ -248,17 +381,39 @@ export async function sendPersistedMessage({
   const assistantMessageId = idGenerator();
   const sessionId = idGenerator();
   const timestamp = Math.floor(now() / 1000);
-  const { payload: createPayload, userMessage } = buildInitialChatMutation({
-    assistantMessageId,
-    modelId: payloadInput.modelId,
-    prompt,
-    timestamp,
-    title: title ?? (prompt.slice(0, 80) || "New chat"),
-    userMessageId
-  });
-  const createdChat = await client.createChat(createPayload);
-  const chatId = getCreatedChatId(createdChat);
-  const messages = [{ role: "user", content: prompt }];
+  const chatSetup = activeChat
+    ? buildContinuationChatMutation({
+        activeChat,
+        assistantMessageId,
+        modelId: payloadInput.modelId,
+        prompt,
+        timestamp,
+        userMessageId
+      })
+    : (() => {
+        const { payload, userMessage } = buildInitialChatMutation({
+          assistantMessageId,
+          modelId: payloadInput.modelId,
+          prompt,
+          timestamp,
+          title: title ?? (prompt.slice(0, 80) || "New chat"),
+          userMessageId
+        });
+
+        return {
+          chatId: undefined,
+          messages: [{ role: "user", content: prompt }],
+          parentId: userMessageId,
+          payload,
+          userMessage
+        };
+      })();
+  const chatId = chatSetup.chatId ?? getCreatedChatId(await client.createChat(chatSetup.payload));
+
+  if (chatSetup.chatId) {
+    await client.updateChat(chatId, chatSetup.payload);
+  }
+
   const completionPayload = buildCompletionPayload({
     ...payloadInput,
     assistantMessageId,
@@ -268,10 +423,10 @@ export async function sendPersistedMessage({
       follow_up_generation: false
     },
     chatId,
-    messages,
-    parentId: userMessageId,
+    messages: chatSetup.messages,
+    parentId: chatSetup.parentId,
     sessionId,
-    userMessage
+    userMessage: chatSetup.userMessage
   });
   const stream = await client.streamChatCompletion(completionPayload);
   let assistantText = "";

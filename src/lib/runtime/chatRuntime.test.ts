@@ -99,6 +99,7 @@ test("sendPersistedMessage creates linked chat, polls persisted text when stream
   };
   const client = {
     createChat: vi.fn(async () => ({ id: "chat-1" })),
+    updateChat: vi.fn(async () => ({ id: "chat-1" })),
     streamChatCompletion: vi.fn(async () => createStream([])),
     getChat: vi
       .fn()
@@ -222,4 +223,151 @@ test("sendPersistedMessage creates linked chat, polls persisted text when stream
   );
   expect(client.getChat).toHaveBeenCalledTimes(3);
   expect(contentChunks).toEqual(["persisted ok"]);
+});
+
+test("sendPersistedMessage continues the active chat instead of creating a new one", async () => {
+  const activeChat: ChatTree = {
+    id: "chat-1",
+    title: "Existing chat",
+    currentId: "assistant-prev",
+    messages: {
+      "user-prev": { id: "user-prev", role: "user", content: "Hello" },
+      "assistant-prev": {
+        id: "assistant-prev",
+        role: "assistant",
+        content: "Hi there"
+      }
+    },
+    raw: {
+      chat: {
+        title: "Existing chat",
+        models: ["openrouter/fast"],
+        currentId: "assistant-prev",
+        messages: [
+          {
+            id: "user-prev",
+            role: "user",
+            content: "Hello",
+            timestamp: 1714528700,
+            models: ["openrouter/fast"],
+            childrenIds: ["assistant-prev"]
+          },
+          {
+            id: "assistant-prev",
+            parentId: "user-prev",
+            role: "assistant",
+            content: "Hi there",
+            timestamp: 1714528701,
+            childrenIds: [],
+            model: "openrouter/fast",
+            modelName: "openrouter/fast",
+            modelIdx: 0,
+            done: true
+          }
+        ],
+        history: {
+          currentId: "assistant-prev",
+          messages: {
+            "user-prev": {
+              id: "user-prev",
+              role: "user",
+              content: "Hello",
+              childrenIds: ["assistant-prev"]
+            },
+            "assistant-prev": {
+              id: "assistant-prev",
+              parentId: "user-prev",
+              role: "assistant",
+              content: "Hi there",
+              childrenIds: []
+            }
+          }
+        }
+      }
+    }
+  };
+  const refreshedChat: ChatTree = {
+    id: "chat-1",
+    title: "Existing chat",
+    currentId: "assistant-next",
+    messages: {
+      "assistant-next": {
+        id: "assistant-next",
+        role: "assistant",
+        content: "next answer"
+      }
+    }
+  };
+  const client = {
+    createChat: vi.fn(async () => ({ id: "new-chat" })),
+    updateChat: vi.fn(async () => ({ id: "chat-1" })),
+    streamChatCompletion: vi.fn(async () =>
+      createStream(['data: {"choices":[{"delta":{"content":"next answer"}}]}\n\n'])
+    ),
+    getChat: vi.fn(async () => refreshedChat),
+    completeChat: vi.fn(async () => ({ ok: true }))
+  };
+
+  await expect(
+    sendPersistedMessage({
+      activeChat,
+      client,
+      idGenerator: vi
+        .fn()
+        .mockReturnValueOnce("user-next")
+        .mockReturnValueOnce("assistant-next")
+        .mockReturnValueOnce("session-1"),
+      modelId: "openrouter/fast",
+      modelItem: { id: "openrouter/fast" },
+      now: () => 1714528800000,
+      prompt: "Continue please"
+    })
+  ).resolves.toEqual({
+    assistantText: "next answer",
+    chatId: "chat-1",
+    refreshedChat
+  });
+
+  expect(client.createChat).not.toHaveBeenCalled();
+  expect(client.updateChat).toHaveBeenCalledWith("chat-1", {
+    chat: {
+      title: "Existing chat",
+      models: ["openrouter/fast"],
+      currentId: "assistant-next",
+      messages: [
+        expect.objectContaining({ id: "user-prev" }),
+        expect.objectContaining({ id: "assistant-prev", childrenIds: ["user-next"] }),
+        expect.objectContaining({
+          id: "user-next",
+          parentId: "assistant-prev",
+          childrenIds: ["assistant-next"]
+        }),
+        expect.objectContaining({ id: "assistant-next", parentId: "user-next" })
+      ],
+      history: {
+        currentId: "assistant-next",
+        messages: {
+          "user-prev": expect.objectContaining({ id: "user-prev" }),
+          "assistant-prev": expect.objectContaining({ childrenIds: ["user-next"] }),
+          "user-next": expect.objectContaining({
+            parentId: "assistant-prev",
+            childrenIds: ["assistant-next"]
+          }),
+          "assistant-next": expect.objectContaining({ parentId: "user-next" })
+        }
+      }
+    }
+  });
+  expect(client.streamChatCompletion).toHaveBeenCalledWith(
+    expect.objectContaining({
+      chat_id: "chat-1",
+      id: "assistant-next",
+      parent_id: "user-next",
+      messages: [
+        { role: "user", content: "Hello" },
+        { role: "assistant", content: "Hi there" },
+        { role: "user", content: "Continue please" }
+      ]
+    })
+  );
 });
