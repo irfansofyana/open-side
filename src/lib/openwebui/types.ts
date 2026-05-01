@@ -99,6 +99,57 @@ export interface ChatTree {
   raw?: Record<string, unknown>;
 }
 
+export type ChatCompletionRequest = {
+  stream: true;
+  model: string;
+  messages: Array<Record<string, unknown>>;
+  chat_id?: string;
+  session_id?: string;
+  id?: string;
+  parent_id?: string | null;
+  user_message?: Record<string, unknown>;
+  model_item?: Record<string, unknown>;
+  tool_ids?: string[];
+  filter_ids?: string[];
+  features: FeatureFlags;
+  params: Record<string, unknown>;
+  variables: Record<string, unknown>;
+  metadata: {
+    variables: Record<string, unknown>;
+  };
+  stream_options: {
+    include_usage: true;
+  };
+  background_tasks: Record<string, unknown>;
+  tool_servers: Array<Record<string, unknown>>;
+};
+
+export type BuildCompletionPayloadInput = {
+  modelId: string;
+  messages: Array<Record<string, unknown>>;
+  chatId?: string;
+  sessionId?: string;
+  assistantMessageId?: string;
+  parentId?: string | null;
+  userMessage?: Record<string, unknown>;
+  modelItem?: Record<string, unknown>;
+  toolIds?: string[];
+  filterIds?: string[];
+  features?: Partial<FeatureFlags>;
+  params?: Record<string, unknown>;
+  variables?: Record<string, unknown>;
+  backgroundTasks?: Record<string, unknown>;
+  toolServers?: Array<Record<string, unknown>>;
+  isPipeModel?: boolean;
+};
+
+export type StreamEvent =
+  | { type: "content"; content: string }
+  | { type: "status"; status: string; raw?: unknown }
+  | { type: "usage"; usage: Record<string, unknown> }
+  | { type: "error"; message: string; raw?: unknown }
+  | { type: "done" };
+
 export const defaultFeatureFlags: FeatureFlags = {
   web_search: false,
   image_generation: false,

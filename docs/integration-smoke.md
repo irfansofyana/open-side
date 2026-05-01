@@ -76,6 +76,12 @@ Expected:
 
 The command does not print the token or password. It sends one prompt to the selected model and may create server-side activity or history depending on Open WebUI routing, so keep it separate from the read-only smoke.
 
+Known-good result:
+
+- `https://ai.irfansp.dev`
+- `openrouter.anthropic/claude-haiku-4.5`
+- Direct `/api/chat/completions` streaming returned `open-webui-extension-smoke-ok`.
+
 ## Manual Chrome Smoke
 
 1. Run `npm run smoke:build`.
