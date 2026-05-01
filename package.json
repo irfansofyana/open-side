@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
+    "smoke:build": "npm run build && node scripts/verify-extension-build.mjs",
+    "smoke:openwebui": "node scripts/openwebui-smoke.mjs",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
     "lint": "tsc --noEmit"
