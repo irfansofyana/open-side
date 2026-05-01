@@ -30,14 +30,38 @@ const connectionResult: ConnectToServerResult = {
   ]
 };
 
-test("default connection form renders", () => {
+const emptyRestore = vi.fn<() => Promise<RestoreSavedConnectionResult>>().mockResolvedValue({
+  status: "empty"
+});
+
+test("default connection form renders", async () => {
   render(<App />);
 
-  expect(screen.getByRole("heading", { name: "Connect server" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "Connect server" })).toBeInTheDocument();
   expect(screen.getByLabelText("Server URL")).toBeInTheDocument();
   expect(screen.getByLabelText("Email or username")).toBeInTheDocument();
   expect(screen.getByLabelText("Password")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Connect" })).toBeInTheDocument();
+});
+
+test("startup restore hides credential form until saved session check finishes", async () => {
+  let resolveRestore: (result: RestoreSavedConnectionResult) => void = () => undefined;
+  const restoreConnection = vi.fn<() => Promise<RestoreSavedConnectionResult>>(
+    () =>
+      new Promise((resolve) => {
+        resolveRestore = resolve;
+      })
+  );
+
+  render(<App restoreConnection={restoreConnection} />);
+
+  expect(screen.getByRole("heading", { name: "Restoring session" })).toBeInTheDocument();
+  expect(screen.queryByLabelText("Server URL")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
+
+  resolveRestore({ status: "empty" });
+
+  expect(await screen.findByRole("heading", { name: "Connect server" })).toBeInTheDocument();
 });
 
 test("saved session restores ready state without asking for credentials", async () => {
@@ -82,9 +106,9 @@ test("expired saved session prefills server and email and can forget the saved s
 test("successful submit calls connect function with form values and renders ready state/models", async () => {
   const connect = vi.fn().mockResolvedValue(connectionResult);
 
-  render(<App connect={connect} />);
+  render(<App connect={connect} restoreConnection={emptyRestore} />);
 
-  fireEvent.change(screen.getByLabelText("Server URL"), {
+  fireEvent.change(await screen.findByLabelText("Server URL"), {
     target: { value: "https://openwebui.example.com" }
   });
   fireEvent.change(screen.getByLabelText("Email or username"), {
@@ -113,9 +137,9 @@ test("successful submit calls connect function with form values and renders read
 test("failed submit renders error message", async () => {
   const connect = vi.fn().mockRejectedValue(new Error("Unable to connect"));
 
-  render(<App connect={connect} />);
+  render(<App connect={connect} restoreConnection={emptyRestore} />);
 
-  fireEvent.change(screen.getByLabelText("Server URL"), {
+  fireEvent.change(await screen.findByLabelText("Server URL"), {
     target: { value: "https://openwebui.example.com" }
   });
   fireEvent.change(screen.getByLabelText("Email or username"), {
@@ -150,9 +174,9 @@ test("connected user can send a prompt and see streamed assistant text", async (
     };
   });
 
-  render(<App connect={connect} sendMessage={sendMessage} />);
+  render(<App connect={connect} restoreConnection={emptyRestore} sendMessage={sendMessage} />);
 
-  fireEvent.change(screen.getByLabelText("Server URL"), {
+  fireEvent.change(await screen.findByLabelText("Server URL"), {
     target: { value: "https://openwebui.example.com" }
   });
   fireEvent.change(screen.getByLabelText("Email or username"), {

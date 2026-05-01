@@ -137,10 +137,11 @@ Known-good result:
 7. Confirm the ready state appears with the server name and model selector.
 8. Inspect extension storage and confirm the token exists but the password is not stored.
 9. Close and reopen the side panel.
-10. Confirm the extension restores the saved server/session to the ready state without asking for password again.
-11. If the saved session is invalid or expired, confirm the server URL and known email are prefilled and only the password must be re-entered.
-12. Click "Forget saved server" from the connection screen and confirm the server URL, token/session, preferences, and active UI state are removed from extension storage.
-13. Try an invalid password and confirm an auth error is shown.
+10. Confirm the extension shows a restoring state instead of flashing the login form while checking the saved session.
+11. Confirm the extension restores the saved server/session to the ready state without asking for password again.
+12. If the saved session is invalid or expired, confirm the server URL and known email are prefilled and only the password must be re-entered.
+13. Click "Forget saved server" from the connection screen and confirm the server URL, token/session, preferences, and active UI state are removed from extension storage.
+14. Try an invalid password and confirm an auth error is shown.
 
 ## Manual Active Chat Smoke
 

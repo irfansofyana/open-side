@@ -84,6 +84,7 @@ export function App({
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [activeChat, setActiveChat] = useState<ChatTree>();
   const [savedServerId, setSavedServerId] = useState<string>();
+  const [isRestoring, setIsRestoring] = useState(true);
 
   useEffect(() => {
     let isMounted = true;
@@ -124,6 +125,11 @@ export function App({
       .catch((error) => {
         if (isMounted) {
           setErrorMessage(getErrorMessage(error));
+        }
+      })
+      .finally(() => {
+        if (isMounted) {
+          setIsRestoring(false);
         }
       });
 
@@ -301,6 +307,12 @@ export function App({
             </button>
           </form>
         </>
+      ) : isRestoring ? (
+        <section className="connection-panel" aria-labelledby="restore-session-title">
+          <p className="eyebrow">Server</p>
+          <h1 id="restore-session-title">Restoring session</h1>
+          <p className="server-name">Checking saved Open WebUI session...</p>
+        </section>
       ) : (
         <section className="connection-panel" aria-labelledby="connect-server-title">
           <p className="eyebrow">Server</p>
