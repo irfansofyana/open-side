@@ -1,4 +1,5 @@
 import {
+  type ChatCompletionRequest,
   type ChatSummary,
   type ChatTree,
   OpenWebUIError,
@@ -211,10 +212,41 @@ export class OpenWebUIClient {
     };
   }
 
+  async streamChatCompletion(
+    payload: ChatCompletionRequest
+  ): Promise<ReadableStream<Uint8Array>> {
+    const response = await this.rawRequest("/api/chat/completions", {
+      auth: true,
+      body: JSON.stringify(payload),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+
+    if (!response.body) {
+      throw new OpenWebUIError(
+        "ServerUnreachableError",
+        "Open WebUI did not return a stream"
+      );
+    }
+
+    return response.body;
+  }
+
   private async request(
     path: string,
     options: RequestInit & { auth: boolean; signIn?: boolean }
   ): Promise<unknown> {
+    const response = await this.rawRequest(path, options);
+
+    return readJson(response);
+  }
+
+  private async rawRequest(
+    path: string,
+    options: RequestInit & { auth: boolean; signIn?: boolean }
+  ): Promise<Response> {
     const { auth, signIn, ...requestOptions } = options;
     const headers = await this.buildHeaders(requestOptions.headers, auth);
     let response: Response;
@@ -256,7 +288,7 @@ export class OpenWebUIClient {
       );
     }
 
-    return readJson(response);
+    return response;
   }
 
   private async buildHeaders(

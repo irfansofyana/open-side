@@ -355,6 +355,75 @@ test("getChat falls back to root messages and then empty messages", async () => 
   });
 });
 
+test("streamChatCompletion posts Open WebUI payload and returns response body", async () => {
+  const stream = new ReadableStream<Uint8Array>();
+  fetchMock.mockResolvedValueOnce(new Response(stream, { status: 200 }));
+
+  const client = new OpenWebUIClient({
+    baseUrl: "https://openwebui.example.com",
+    getToken: () => "token-1"
+  });
+  const payload = {
+    stream: true as const,
+    model: "llama",
+    messages: [{ role: "user", content: "hello" }],
+    features: {
+      web_search: false,
+      image_generation: false,
+      code_interpreter: false,
+      memory: false
+    },
+    params: {},
+    variables: {},
+    metadata: { variables: {} },
+    stream_options: { include_usage: true as const },
+    background_tasks: {},
+    tool_servers: []
+  };
+
+  await expect(client.streamChatCompletion(payload)).resolves.toBe(stream);
+  expect(fetchMock).toHaveBeenCalledWith("https://openwebui.example.com/api/chat/completions", {
+    body: JSON.stringify(payload),
+    headers: {
+      authorization: "Bearer token-1",
+      "content-type": "application/json"
+    },
+    method: "POST"
+  });
+});
+
+test("streamChatCompletion fails when response has no stream body", async () => {
+  fetchMock.mockResolvedValueOnce(new Response(null, { status: 200 }));
+
+  const client = new OpenWebUIClient({
+    baseUrl: "https://openwebui.example.com",
+    getToken: () => "token-1"
+  });
+
+  await expect(
+    client.streamChatCompletion({
+      stream: true,
+      model: "llama",
+      messages: [],
+      features: {
+        web_search: false,
+        image_generation: false,
+        code_interpreter: false,
+        memory: false
+      },
+      params: {},
+      variables: {},
+      metadata: { variables: {} },
+      stream_options: { include_usage: true },
+      background_tasks: {},
+      tool_servers: []
+    })
+  ).rejects.toMatchObject({
+    code: "ServerUnreachableError",
+    message: "Open WebUI did not return a stream"
+  });
+});
+
 test("unauthorized response maps to TokenExpiredError", async () => {
   fetchMock.mockResolvedValueOnce(jsonResponse({ detail: "Unauthorized" }, { status: 401 }));
 
