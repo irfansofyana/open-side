@@ -39,8 +39,15 @@ Expected:
 - `/api/v1/auths/` returns the current user.
 - `/api/models` returns a model list.
 - `/api/v1/models/model?id=...` returns model detail for the selected or first model.
+- `/api/v1/chats/` returns recent chat summaries.
+- `/api/v1/chats/:id` returns detail for the first recent chat when one exists.
 
 The script does not print the token or password.
+It is read-only for chats: it does not create chats, update history, or send prompts.
+
+## Mutating Chat Smoke
+
+Do not add send/stream smoke checks to the default live smoke command. Creating a chat and sending a prompt mutates Open WebUI server history, so that gate should be a separate explicit opt-in command with a clear test title and model selection.
 
 ## Manual Chrome Smoke
 

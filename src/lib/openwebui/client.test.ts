@@ -165,6 +165,196 @@ test("getModelDetail URL-encodes model id", async () => {
   );
 });
 
+test("getChats fetches default URL and normalizes array response", async () => {
+  fetchMock.mockResolvedValueOnce(
+    jsonResponse([
+      {
+        id: "chat-1",
+        title: "First chat",
+        updated_at: 1714528800,
+        pinned: false
+      }
+    ])
+  );
+
+  const client = new OpenWebUIClient({
+    baseUrl: "https://openwebui.example.com",
+    getToken: () => "token-1"
+  });
+
+  await expect(client.getChats()).resolves.toEqual([
+    {
+      id: "chat-1",
+      title: "First chat",
+      updatedAt: 1714528800,
+      pinned: false,
+      raw: {
+        id: "chat-1",
+        title: "First chat",
+        updated_at: 1714528800,
+        pinned: false
+      }
+    }
+  ]);
+  expect(fetchMock).toHaveBeenCalledWith(
+    "https://openwebui.example.com/api/v1/chats/?page=1&include_folders=false&include_pinned=true",
+    {
+      headers: {
+        authorization: "Bearer token-1"
+      },
+      method: "GET"
+    }
+  );
+});
+
+test("getChats supports data response and explicit paging options", async () => {
+  fetchMock.mockResolvedValueOnce(
+    jsonResponse({
+      data: [
+        {
+          id: "chat-2",
+          title: null,
+          updated_at: "not-a-number",
+          pinned: true
+        }
+      ]
+    })
+  );
+
+  const client = new OpenWebUIClient({
+    baseUrl: "https://openwebui.example.com",
+    getToken: () => "token-1"
+  });
+
+  await expect(client.getChats({ page: 3, includePinned: false })).resolves.toEqual([
+    {
+      id: "chat-2",
+      title: "Untitled chat",
+      pinned: true,
+      raw: {
+        id: "chat-2",
+        title: null,
+        updated_at: "not-a-number",
+        pinned: true
+      }
+    }
+  ]);
+  expect(fetchMock).toHaveBeenCalledWith(
+    "https://openwebui.example.com/api/v1/chats/?page=3&include_folders=false&include_pinned=false",
+    expect.any(Object)
+  );
+});
+
+test("getPinnedChats normalizes pinned summaries", async () => {
+  fetchMock.mockResolvedValueOnce(
+    jsonResponse({
+      data: [
+        {
+          id: "chat-pinned",
+          title: "Pinned chat"
+        }
+      ]
+    })
+  );
+
+  const client = new OpenWebUIClient({
+    baseUrl: "https://openwebui.example.com",
+    getToken: () => "token-1"
+  });
+
+  await expect(client.getPinnedChats()).resolves.toEqual([
+    {
+      id: "chat-pinned",
+      title: "Pinned chat",
+      pinned: true,
+      raw: {
+        id: "chat-pinned",
+        title: "Pinned chat"
+      }
+    }
+  ]);
+  expect(fetchMock).toHaveBeenCalledWith("https://openwebui.example.com/api/v1/chats/pinned", {
+    headers: {
+      authorization: "Bearer token-1"
+    },
+    method: "GET"
+  });
+});
+
+test("getChat URL-encodes id and extracts chat messages", async () => {
+  fetchMock.mockResolvedValueOnce(
+    jsonResponse({
+      id: "folder/chat 1",
+      title: "Chat detail",
+      chat: {
+        messages: {
+          "message-1": { id: "message-1", role: "user", content: "Hello" }
+        },
+        currentId: "message-1"
+      },
+      updated_at: 1714528800,
+      pinned: true
+    })
+  );
+
+  const client = new OpenWebUIClient({
+    baseUrl: "https://openwebui.example.com",
+    getToken: () => "token-1"
+  });
+
+  await expect(client.getChat("folder/chat 1")).resolves.toMatchObject({
+    id: "folder/chat 1",
+    title: "Chat detail",
+    messages: {
+      "message-1": { id: "message-1", role: "user", content: "Hello" }
+    },
+    currentId: "message-1",
+    updatedAt: 1714528800,
+    pinned: true
+  });
+  expect(fetchMock).toHaveBeenCalledWith(
+    "https://openwebui.example.com/api/v1/chats/folder%2Fchat%201",
+    {
+      headers: {
+        authorization: "Bearer token-1"
+      },
+      method: "GET"
+    }
+  );
+});
+
+test("getChat falls back to root messages and then empty messages", async () => {
+  fetchMock
+    .mockResolvedValueOnce(
+      jsonResponse({
+        id: "chat-root",
+        title: "Root messages",
+        messages: {
+          "message-1": { id: "message-1", role: "assistant", content: "Hi" }
+        }
+      })
+    )
+    .mockResolvedValueOnce(jsonResponse({ id: "chat-empty" }));
+
+  const client = new OpenWebUIClient({
+    baseUrl: "https://openwebui.example.com",
+    getToken: () => "token-1"
+  });
+
+  await expect(client.getChat("chat-root")).resolves.toMatchObject({
+    id: "chat-root",
+    title: "Root messages",
+    messages: {
+      "message-1": { id: "message-1", role: "assistant", content: "Hi" }
+    }
+  });
+  await expect(client.getChat("chat-empty")).resolves.toMatchObject({
+    id: "chat-empty",
+    title: "Untitled chat",
+    messages: {}
+  });
+});
+
 test("unauthorized response maps to TokenExpiredError", async () => {
   fetchMock.mockResolvedValueOnce(jsonResponse({ detail: "Unauthorized" }, { status: 401 }));
 

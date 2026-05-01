@@ -99,6 +99,29 @@ async function main() {
     console.log("- model detail: skipped; no models returned");
   }
 
+  const chatsResponse = await requestJson(
+    baseUrl,
+    "/api/v1/chats/?page=1&include_folders=false&include_pinned=true",
+    { headers: authHeaders }
+  );
+  const chats = Array.isArray(chatsResponse) ? chatsResponse : chatsResponse?.data;
+  if (!Array.isArray(chats)) {
+    throw new Error("Recent chats response was not an array or { data: array }");
+  }
+  console.log(`- recent chats: ${chats.length}`);
+
+  const firstChat = chats.find((chat) => chat && typeof chat === "object" && chat.id);
+  if (firstChat) {
+    const chatDetail = await requestJson(
+      baseUrl,
+      `/api/v1/chats/${encodeURIComponent(firstChat.id)}`,
+      { headers: authHeaders }
+    );
+    console.log(`- first chat detail: ${chatDetail?.title ?? chatDetail?.id ?? firstChat.id}`);
+  } else {
+    console.log("- first chat detail: skipped; no chats returned");
+  }
+
   console.log("Open WebUI live smoke passed");
 }
 

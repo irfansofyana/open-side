@@ -80,6 +80,25 @@ export interface OpenWebUIModelDetail extends OpenWebUIModel {
   info?: Record<string, unknown>;
 }
 
+export interface ChatSummary {
+  id: string;
+  title: string;
+  updatedAt?: number;
+  pinned?: boolean;
+  raw?: Record<string, unknown>;
+}
+
+export interface ChatTree {
+  id: string;
+  title: string;
+  messages: Record<string, unknown>;
+  currentId?: string;
+  createdAt?: number;
+  updatedAt?: number;
+  pinned?: boolean;
+  raw?: Record<string, unknown>;
+}
+
 export const defaultFeatureFlags: FeatureFlags = {
   web_search: false,
   image_generation: false,

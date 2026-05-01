@@ -1,4 +1,6 @@
 import {
+  type ChatSummary,
+  type ChatTree,
   OpenWebUIError,
   type OpenWebUIModel,
   type OpenWebUIModelDetail,
@@ -46,6 +48,37 @@ const readJson = async (response: Response): Promise<unknown> => {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const asRecordArray = (value: unknown): Record<string, unknown>[] => {
+  const items = Array.isArray(value) ? value : isRecord(value) ? value.data : undefined;
+
+  return Array.isArray(items) ? items.filter(isRecord) : [];
+};
+
+const normalizeChatSummary = (
+  value: Record<string, unknown>,
+  options: { pinnedFallback?: boolean } = {}
+): ChatSummary => ({
+  id: String(value.id),
+  title: typeof value.title === "string" && value.title.length > 0 ? value.title : "Untitled chat",
+  updatedAt: typeof value.updated_at === "number" ? value.updated_at : undefined,
+  pinned: typeof value.pinned === "boolean" ? value.pinned : options.pinnedFallback,
+  raw: value
+});
+
+const getMessages = (value: Record<string, unknown>): Record<string, unknown> => {
+  const chat = isRecord(value.chat) ? value.chat : undefined;
+
+  if (chat && isRecord(chat.messages)) {
+    return chat.messages;
+  }
+
+  if (isRecord(value.messages)) {
+    return value.messages;
+  }
+
+  return {};
+};
 
 const looksLikeOpenWebUIConfig = (value: unknown): value is Record<string, unknown> => {
   if (!isRecord(value)) {
@@ -135,6 +168,47 @@ export class OpenWebUIClient {
     );
 
     return isRecord(data) ? (data as OpenWebUIModelDetail) : { id: modelId };
+  }
+
+  async getChats(
+    options: { page?: number; includePinned?: boolean } = {}
+  ): Promise<ChatSummary[]> {
+    const page = options.page ?? 1;
+    const includePinned = options.includePinned ?? true;
+    const data = await this.request(
+      `/api/v1/chats/?page=${page}&include_folders=false&include_pinned=${includePinned}`,
+      { auth: true }
+    );
+
+    return asRecordArray(data).map((chat) => normalizeChatSummary(chat));
+  }
+
+  async getPinnedChats(): Promise<ChatSummary[]> {
+    const data = await this.request("/api/v1/chats/pinned", { auth: true });
+
+    return asRecordArray(data).map((chat) =>
+      normalizeChatSummary(chat, { pinnedFallback: true })
+    );
+  }
+
+  async getChat(chatId: string): Promise<ChatTree> {
+    const data = await this.request(`/api/v1/chats/${encodeURIComponent(chatId)}`, {
+      auth: true
+    });
+    const chat = isRecord(data) ? data : {};
+    const nestedChat = isRecord(chat.chat) ? chat.chat : undefined;
+
+    return {
+      id: typeof chat.id === "string" ? chat.id : chatId,
+      title: typeof chat.title === "string" && chat.title.length > 0 ? chat.title : "Untitled chat",
+      messages: getMessages(chat),
+      currentId:
+        nestedChat && typeof nestedChat.currentId === "string" ? nestedChat.currentId : undefined,
+      createdAt: typeof chat.created_at === "number" ? chat.created_at : undefined,
+      updatedAt: typeof chat.updated_at === "number" ? chat.updated_at : undefined,
+      pinned: typeof chat.pinned === "boolean" ? chat.pinned : undefined,
+      raw: chat
+    };
   }
 
   private async request(
