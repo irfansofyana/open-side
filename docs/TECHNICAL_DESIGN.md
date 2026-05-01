@@ -225,6 +225,13 @@ Minimum endpoints:
 - `POST /api/v1/chats/new`
 - `POST /api/v1/chats/:id`
 
+Active chat behavior:
+
+- create a server-side chat only for the first message without an active chat, or after the user explicitly chooses "New chat"
+- keep the active chat id in side-panel state while the conversation remains selected
+- append follow-up user and assistant nodes to the existing chat tree with `POST /api/v1/chats/:id` before generating
+- allow the selected model to change inside the active chat; the next completion uses the newly selected model while preserving the same chat id and message tree
+
 Recent menu:
 
 - use the first page of `/api/v1/chats/`
@@ -250,7 +257,7 @@ Open WebUI stores chats as a message tree, not merely a flat list. The implement
 
 MVP can start with simple linear chats, but the API layer should already model ids and parent-child relationships so branch support does not require a rewrite.
 
-Before generation, sync the current chat tree to the server. During generation, include `user_message` in the chat completion request so newer Open WebUI servers can insert the user message correctly.
+Before generation, sync the current chat tree to the server. New chats should create the initial user and assistant placeholder nodes. Follow-up messages should update the existing chat tree by appending a new user node under the current assistant node, then appending a new assistant placeholder under that user node. During generation, include `chat_id`, the new assistant `id`, `parent_id`, and `user_message` in the chat completion request so newer Open WebUI servers can insert the user message correctly.
 
 ## Chat Completion Request
 
@@ -521,6 +528,8 @@ Primary views:
 
 The side panel should keep a single active chat runtime. If the user switches chat during streaming, the app should either prevent switching or explicitly stop/detach the active stream. For MVP, prefer preventing chat switches during an active stream unless the user stops generation.
 
+The side panel should expose an explicit "New chat" action. Changing the selected model must not clear `activeChatId` or local transcript state. Only the "New chat" action, logout, reconnect, or selecting a different server-side chat should replace or clear the active chat.
+
 ## Error Handling
 
 Typed errors should flow from low-level modules to UI messages.
@@ -557,17 +566,20 @@ Before building the full UI, validate these with a small API harness:
 4. Fetch full model config for the selected model.
 5. Fetch recent chats.
 6. Create a new chat.
-7. Send one streaming message and confirm incremental output arrives through direct fetch streaming.
+7. Send one streaming message and confirm incremental output arrives through direct fetch streaming or polling recovery.
 8. Finalize with `/api/chat/completed`.
 9. Refetch chat and confirm message persisted.
-10. Fetch tools/functions.
-11. Send a message with one selected tool and explicit `features`.
-12. Confirm whether selected-tool status/output arrives through direct streaming, polling, or requires Socket.IO.
-13. Verify open-tab listing in Chrome.
-14. Verify active-tab readable text extraction.
-15. Verify graceful fallback for a non-readable tab.
+10. Send a second message and confirm it updates the same chat id instead of creating a new chat.
+11. Switch model and send another message, confirming the same chat id is preserved.
+12. Use the explicit "New chat" action and confirm the next send creates a separate chat id.
+13. Fetch tools/functions.
+14. Send a message with one selected tool and explicit `features`.
+15. Confirm whether selected-tool status/output arrives through direct streaming, polling, or requires Socket.IO.
+16. Verify open-tab listing in Chrome.
+17. Verify active-tab readable text extraction.
+18. Verify graceful fallback for a non-readable tab.
 
-Do not polish chat UI until gates 1-12 pass against the target Open WebUI server. Do not polish tab-context UI until gates 13-15 pass in Chrome.
+Do not polish chat UI until gates 1-15 pass against the target Open WebUI server. Do not polish tab-context UI until gates 16-18 pass in Chrome.
 
 ## Implementation Order
 
@@ -579,7 +591,7 @@ Do not polish chat UI until gates 1-12 pass against the target Open WebUI server
 6. Model list and full selected-model config.
 7. Chat list, recent chats, full history paging.
 8. Chat data model with message ids and simple parent-child tracking.
-9. Basic new chat and direct streaming message.
+9. Explicit new chat, active-chat continuation, and direct streaming message.
 10. `/api/chat/completed` finalization and server refetch.
 11. Tools/functions discovery.
 12. Tool/default feature selection logic.
@@ -620,6 +632,9 @@ Manual Chrome tests:
 - login against target Open WebUI server
 - recent chats menu loads
 - model switch updates defaults
+- model switch during an active chat keeps the same chat id
+- follow-up sends update the same active chat id
+- New chat clears the active chat and creates a separate server-side chat on the next send
 - built-in tools toggle correctly
 - custom tools are sent as `tool_ids`
 - active tab context extraction works

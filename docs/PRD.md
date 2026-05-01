@@ -12,8 +12,9 @@ The extension is not a web wrapper. It is a native extension UI that talks to Op
 - Support local Open WebUI email/password login.
 - Let users chat with configured Open WebUI models without opening the Open WebUI website.
 - Preserve server-side chat history so conversations remain available in Open WebUI.
+- Keep follow-up messages in the active server-side chat until the user explicitly starts a new chat.
 - Support streaming responses by default.
-- Support model switching.
+- Support model switching before or during a chat without implicitly creating a new chat.
 - Support Open WebUI server-side tools, including custom tools, through the same server-side execution path Open WebUI uses.
 - Show recent server-side chats in a Gemini-like top menu so users can quickly resume past conversations.
 - Let users explicitly add context from currently open browser tabs to a chat.
@@ -67,6 +68,8 @@ If the token expires or becomes invalid, the extension asks the user to log in a
 
 Chat history must be server-side. Users should be able to start or continue a chat in the extension and see that conversation from the Open WebUI website.
 
+The side panel should keep one active chat session. Sending another message continues that active server-side chat. A new server-side chat is created only when there is no active chat yet or when the user explicitly chooses a visible "New chat" action.
+
 The extension should follow Open WebUI's UI-compatible chat lifecycle:
 
 - create or load server-side chats
@@ -88,6 +91,8 @@ A non-streaming fallback may exist for compatibility, but the normal user experi
 ### Models
 
 The extension fetches models from the connected Open WebUI server and lets the user switch models before or during a chat.
+
+Switching the selected model during an active chat changes the model used for the next send, but it must not reset the conversation or create a separate server-side chat by itself.
 
 The selected model should persist per server. If possible, selected model should also persist per chat in whatever shape Open WebUI expects.
 
@@ -175,15 +180,17 @@ Success criteria:
 ### Start A New Chat
 
 1. User opens the side panel.
-2. User chooses a model or accepts the default.
-3. User optionally toggles tools.
-4. User optionally adds context from open browser tabs.
-5. User sends a prompt.
-6. Assistant response streams into the chat.
-7. Chat is saved server-side.
+2. If another chat is active, user clicks "New chat".
+3. User chooses a model or accepts the default.
+4. User optionally toggles tools.
+5. User optionally adds context from open browser tabs.
+6. User sends a prompt.
+7. Assistant response streams into the chat.
+8. Chat is saved server-side.
 
 Success criteria:
 
+- new chat creation is an explicit user action after a chat is active
 - response streams visibly
 - active model is clear
 - enabled tools are clear
@@ -206,6 +213,7 @@ Success criteria:
 - "More" opens a fuller history view
 - loaded messages match server history
 - continuing the chat updates the same server-side conversation
+- switching the model before a follow-up keeps the same active server-side conversation
 
 ### Open Full History
 
@@ -354,7 +362,10 @@ The MVP is complete when:
 - User can see available models from the server.
 - User can select a model.
 - User can start a new server-side chat.
+- User can explicitly start a new chat from an active conversation.
 - User can stream a response from the selected model.
+- Follow-up messages continue the same active server-side chat unless the user starts a new chat.
+- User can switch models within an active chat and send the next message to the newly selected model without creating a separate chat.
 - User can open a Gemini-like top menu and see recent server-side chats.
 - User can select a recent chat and continue it.
 - User can open "More" from recent chats to view fuller server-side chat history.

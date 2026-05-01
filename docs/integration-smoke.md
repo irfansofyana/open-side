@@ -137,3 +137,25 @@ Known-good result:
 7. Confirm the ready state appears with the server name and model selector.
 8. Inspect extension storage and confirm the token exists but the password is not stored.
 9. Try an invalid password and confirm an auth error is shown.
+
+## Manual Active Chat Smoke
+
+Run this after persistent chat runtime changes. It intentionally creates visible server-side chat history.
+
+1. Run `npm run smoke:build`.
+2. Load or reload the unpacked extension from `dist`.
+3. Open the side panel and connect to the target Open WebUI server.
+4. Select a fast, short-response model.
+5. Send a first message and confirm the chat appears in the Open WebUI website.
+6. Send a second follow-up message from the extension.
+7. Confirm the second message appears in the same Open WebUI chat, not a separate chat.
+8. Switch the model in the extension.
+9. Send a third message and confirm it still appears in the same Open WebUI chat.
+10. Click "New chat" in the extension.
+11. Send another message and confirm this creates a separate Open WebUI chat.
+
+Expected:
+
+- Follow-up sends reuse the active chat id.
+- Model switching changes the next completion model but does not reset the active chat.
+- Only the explicit "New chat" action starts a separate server-side chat after a chat is active.
