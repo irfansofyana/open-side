@@ -8,6 +8,7 @@ import {
   extractContentFromData,
   fetchModelItem,
   findPersistedAssistantText,
+  pollPersistedAssistantText,
   selectAssistantText
 } from "./openwebui-persistence-smoke.mjs";
 
@@ -282,6 +283,93 @@ describe("openwebui persistence smoke payloads", () => {
         "assistant-1"
       )
     ).toBe("from array");
+  });
+
+  test("pollPersistedAssistantText refetches until assistant content appears", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            chat: {
+              history: {
+                messages: {
+                  "assistant-1": { role: "assistant", content: "" }
+                }
+              }
+            }
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            chat: {
+              history: {
+                messages: {
+                  "assistant-1": { role: "assistant", content: "persisted chunk" }
+                }
+              }
+            }
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+      );
+    const delay = vi.fn(async () => undefined);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      pollPersistedAssistantText({
+        authHeaders: { authorization: "Bearer token-1" },
+        assistantMessageId: "assistant-1",
+        baseUrl: "https://openwebui.example.com",
+        chatId: "chat-1",
+        delay,
+        intervalMs: 25,
+        maxAttempts: 3
+      })
+    ).resolves.toEqual({
+      attempts: 2,
+      text: "persisted chunk"
+    });
+    expect(delay).toHaveBeenCalledWith(25);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("pollPersistedAssistantText returns empty text after max attempts", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            chat: {
+              history: {
+                messages: {
+                  "assistant-1": { role: "assistant", content: "" }
+                }
+              }
+            }
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+      )
+    );
+
+    await expect(
+      pollPersistedAssistantText({
+        authHeaders: { authorization: "Bearer token-1" },
+        assistantMessageId: "assistant-1",
+        baseUrl: "https://openwebui.example.com",
+        chatId: "chat-1",
+        delay: vi.fn(async () => undefined),
+        intervalMs: 25,
+        maxAttempts: 2
+      })
+    ).resolves.toEqual({
+      attempts: 2,
+      text: ""
+    });
   });
 
   test("extractContentFromData reads Open WebUI event-style stream deltas", () => {

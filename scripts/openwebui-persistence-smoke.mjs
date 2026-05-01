@@ -269,6 +269,8 @@ export function findPersistedAssistantText(chatDetail, assistantMessageId) {
     : "";
 }
 
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function requestJson(baseUrl, path, options = {}) {
   const response = await fetch(`${baseUrl}${path}`, options);
   const text = await response.text();
@@ -290,6 +292,35 @@ async function requestStream(baseUrl, path, options = {}) {
     throw new Error(`Request failed: ${path} did not return a stream`);
   }
   return response.body;
+}
+
+export async function pollPersistedAssistantText({
+  authHeaders,
+  assistantMessageId,
+  baseUrl,
+  chatId,
+  delay: wait = delay,
+  intervalMs,
+  maxAttempts,
+  signal
+}) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const chat = await requestJson(baseUrl, `/api/v1/chats/${encodeURIComponent(chatId)}`, {
+      headers: authHeaders,
+      signal
+    });
+    const text = findPersistedAssistantText(chat, assistantMessageId);
+
+    if (text.trim()) {
+      return { attempts: attempt, text };
+    }
+
+    if (attempt < maxAttempts) {
+      await wait(intervalMs);
+    }
+  }
+
+  return { attempts: maxAttempts, text: "" };
 }
 
 export async function fetchModelItem({
@@ -427,6 +458,8 @@ async function main() {
     "Reply with exactly this text and no extra words: open-webui-extension-persist-ok";
   const timeoutMs = Number(process.env.OPENWEBUI_CHAT_TIMEOUT_MS ?? 60000);
   const maxCharacters = Number(process.env.OPENWEBUI_CHAT_MAX_CHARS ?? 2000);
+  const pollAttempts = Number(process.env.OPENWEBUI_CHAT_POLL_ATTEMPTS ?? 15);
+  const pollIntervalMs = Number(process.env.OPENWEBUI_CHAT_POLL_INTERVAL_MS ?? 2000);
   const title = `Extension smoke ${new Date().toISOString()}`;
 
   const controller = new AbortController();
@@ -530,19 +563,23 @@ async function main() {
     });
 
     const streamResult = await readAssistantText(stream, { maxCharacters });
-    const refetchedChatBeforeComplete = await requestJson(
+    const polledText = await pollPersistedAssistantText({
+      authHeaders,
+      assistantMessageId,
       baseUrl,
-      `/api/v1/chats/${encodeURIComponent(chatId)}`,
-      {
-        headers: authHeaders,
-        signal: controller.signal
-      }
-    );
+      chatId,
+      intervalMs: pollIntervalMs,
+      maxAttempts: pollAttempts,
+      signal: controller.signal
+    });
     const assistantText = selectAssistantText({
       streamedText: streamResult.text,
-      persistedText: findPersistedAssistantText(refetchedChatBeforeComplete, assistantMessageId),
+      persistedText: polledText.text,
       diagnostics: streamResult.diagnostics
     });
+    if (!streamResult.text.trim() && polledText.text.trim()) {
+      console.log(`- persisted assistant text: ok after ${polledText.attempts} poll(s)`);
+    }
     console.log(`- assistant text chars: ${assistantText.length}`);
     console.log(`- assistant preview: ${assistantText.slice(0, 200).replace(/\s+/g, " ")}`);
 
