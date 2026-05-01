@@ -49,6 +49,33 @@ It is read-only for chats: it does not create chats, update history, or send pro
 
 Do not add send/stream smoke checks to the default live smoke command. Creating a chat and sending a prompt mutates Open WebUI server history, so that gate should be a separate explicit opt-in command with a clear test title and model selection.
 
+Use a deliberately selected model. The command refuses to run unless `OPENWEBUI_CHAT_MODEL_ID` is set, so it never defaults to the first model on a large server.
+
+```bash
+OPENWEBUI_URL=http://localhost:3000 \
+OPENWEBUI_EMAIL=user@example.com \
+OPENWEBUI_PASSWORD='password' \
+OPENWEBUI_CHAT_MODEL_ID='fast-short-response-model' \
+OPENWEBUI_CHAT_MUTATE=1 \
+npm run smoke:chat:send
+```
+
+Optional controls:
+
+```bash
+OPENWEBUI_CHAT_PROMPT='Reply with exactly: smoke-ok'
+OPENWEBUI_CHAT_TIMEOUT_MS=60000
+OPENWEBUI_CHAT_MAX_CHARS=2000
+```
+
+Expected:
+
+- Local sign-in succeeds.
+- The selected model id exists in `/api/models`.
+- `/api/chat/completions` returns streamed assistant text.
+
+The command does not print the token or password. It sends one prompt to the selected model and may create server-side activity or history depending on Open WebUI routing, so keep it separate from the read-only smoke.
+
 ## Manual Chrome Smoke
 
 1. Run `npm run smoke:build`.
