@@ -5,6 +5,7 @@ import type {
   ChatCompletionRequest,
   ChatMutationPayload,
   ChatMutationResult,
+  ChatSummary,
   ChatTree,
   StreamEvent
 } from "../openwebui/types";
@@ -19,6 +20,14 @@ type PersistedChatClient = StreamingClient & {
   createChat: (payload: ChatMutationPayload) => Promise<ChatMutationResult>;
   updateChat: (chatId: string, payload: ChatMutationPayload) => Promise<ChatMutationResult>;
   completeChat: (payload: ChatMutationPayload) => Promise<ChatMutationResult>;
+  getChat: (chatId: string) => Promise<ChatTree>;
+};
+
+type RecentChatsClient = {
+  getChats: (options: { page: number; includePinned: boolean }) => Promise<ChatSummary[]>;
+};
+
+type ChatLoaderClient = {
   getChat: (chatId: string) => Promise<ChatTree>;
 };
 
@@ -61,6 +70,17 @@ export type SendPersistedMessageResult = {
   assistantText: string;
   chatId: string;
   refreshedChat: ChatTree;
+};
+
+export type DisplayChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+};
+
+export type LoadChatForDisplayResult = {
+  chat: ChatTree;
+  messages: DisplayChatMessage[];
 };
 
 const defaultDelay = (ms: number): Promise<void> =>
@@ -177,6 +197,53 @@ const getRawChat = (chat: ChatTree): Record<string, unknown> => {
 
 const getMessageContent = (message: Record<string, unknown>): string | undefined =>
   typeof message.content === "string" ? message.content : undefined;
+
+const getMessageRole = (message: Record<string, unknown>): "user" | "assistant" | undefined =>
+  message.role === "user" || message.role === "assistant" ? message.role : undefined;
+
+const getMessageId = (message: Record<string, unknown>, index: number): string =>
+  typeof message.id === "string" && message.id.length > 0
+    ? message.id
+    : `message-${index}`;
+
+const getRawMessagesArray = (chat: ChatTree): Record<string, unknown>[] => {
+  const rawChat = chat.raw?.chat;
+  const rawMessages = isRecord(rawChat) ? rawChat.messages : chat.raw?.messages;
+
+  return Array.isArray(rawMessages) ? rawMessages.filter(isRecord) : [];
+};
+
+const getRawHistoryMessages = (chat: ChatTree): Record<string, unknown>[] => {
+  const rawChat = chat.raw?.chat;
+  const rawHistory =
+    isRecord(rawChat) && isRecord(rawChat.history) ? rawChat.history.messages : undefined;
+  const messages = isRecord(rawHistory) ? rawHistory : chat.messages;
+
+  return Object.values(messages).filter(isRecord);
+};
+
+const toDisplayMessages = (chat: ChatTree): DisplayChatMessage[] => {
+  const rawArrayMessages = getRawMessagesArray(chat);
+  const sourceMessages = rawArrayMessages.length > 0 ? rawArrayMessages : getRawHistoryMessages(chat);
+  const orderedMessages =
+    rawArrayMessages.length > 0
+      ? sourceMessages
+      : [...sourceMessages].sort((left, right) => {
+          const leftTimestamp = typeof left.timestamp === "number" ? left.timestamp : 0;
+          const rightTimestamp = typeof right.timestamp === "number" ? right.timestamp : 0;
+
+          return leftTimestamp - rightTimestamp;
+        });
+
+  return orderedMessages.flatMap((message, index) => {
+    const role = getMessageRole(message);
+    const content = getMessageContent(message);
+
+    return role && content !== undefined
+      ? [{ id: getMessageId(message, index), role, content }]
+      : [];
+  });
+};
 
 const toCompletionMessages = (
   messages: Array<Record<string, unknown>>,
@@ -363,6 +430,29 @@ export async function sendStreamingMessage({
   }
 
   return { assistantText };
+}
+
+export async function listRecentChats({
+  client
+}: {
+  client: RecentChatsClient;
+}): Promise<ChatSummary[]> {
+  return client.getChats({ page: 1, includePinned: true });
+}
+
+export async function loadChatForDisplay({
+  chatId,
+  client
+}: {
+  chatId: string;
+  client: ChatLoaderClient;
+}): Promise<LoadChatForDisplayResult> {
+  const chat = await client.getChat(chatId);
+
+  return {
+    chat,
+    messages: toDisplayMessages(chat)
+  };
 }
 
 export async function sendPersistedMessage({

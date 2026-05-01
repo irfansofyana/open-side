@@ -1,4 +1,9 @@
-import { sendPersistedMessage, sendStreamingMessage } from "./chatRuntime";
+import {
+  listRecentChats,
+  loadChatForDisplay,
+  sendPersistedMessage,
+  sendStreamingMessage
+} from "./chatRuntime";
 import type { ChatCompletionRequest, ChatTree } from "../openwebui/types";
 
 const createStream = (chunks: string[]): ReadableStream<Uint8Array> =>
@@ -371,4 +376,52 @@ test("sendPersistedMessage continues the active chat instead of creating a new o
       ]
     })
   );
+});
+
+test("listRecentChats fetches the first server-side chat page with pinned chats included", async () => {
+  const chats = [
+    { id: "chat-1", title: "First chat", updatedAt: 1714528800 },
+    { id: "chat-2", title: "Second chat", pinned: true }
+  ];
+  const client = {
+    getChats: vi.fn(async () => chats)
+  };
+
+  await expect(listRecentChats({ client })).resolves.toEqual(chats);
+
+  expect(client.getChats).toHaveBeenCalledWith({ page: 1, includePinned: true });
+});
+
+test("loadChatForDisplay loads a chat and returns ordered user and assistant messages", async () => {
+  const chat: ChatTree = {
+    id: "chat-1",
+    title: "Loaded chat",
+    currentId: "assistant-2",
+    messages: {},
+    raw: {
+      chat: {
+        messages: [
+          { id: "user-1", role: "user", content: "Hello", timestamp: 1 },
+          { id: "assistant-1", role: "assistant", content: "Hi", timestamp: 2 },
+          { id: "user-2", role: "user", content: "Follow up", timestamp: 3 },
+          { id: "assistant-2", role: "assistant", content: "Answer", timestamp: 4 },
+          { id: "system-1", role: "system", content: "Hidden" }
+        ]
+      }
+    }
+  };
+  const client = {
+    getChat: vi.fn(async () => chat)
+  };
+
+  await expect(loadChatForDisplay({ chatId: "chat-1", client })).resolves.toEqual({
+    chat,
+    messages: [
+      { id: "user-1", role: "user", content: "Hello" },
+      { id: "assistant-1", role: "assistant", content: "Hi" },
+      { id: "user-2", role: "user", content: "Follow up" },
+      { id: "assistant-2", role: "assistant", content: "Answer" }
+    ]
+  });
+  expect(client.getChat).toHaveBeenCalledWith("chat-1");
 });

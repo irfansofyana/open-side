@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 
 import { forgetServerConnection } from "../lib/chrome/storage";
 import { OpenWebUIClient } from "../lib/openwebui/client";
-import type { ChatTree, OpenWebUIModel } from "../lib/openwebui/types";
+import type { ChatSummary, ChatTree, OpenWebUIModel } from "../lib/openwebui/types";
 import {
   connectToServer,
   restoreSavedConnection,
@@ -10,6 +10,9 @@ import {
   type ConnectToServerResult
 } from "../lib/runtime/connectionRuntime";
 import {
+  listRecentChats,
+  loadChatForDisplay,
+  type LoadChatForDisplayResult,
   sendPersistedMessage,
   type SendPersistedMessageResult
 } from "../lib/runtime/chatRuntime";
@@ -21,6 +24,8 @@ type AppProps = {
     password: string;
   }) => Promise<ConnectToServerResult>;
   forgetSavedServer?: (serverId: string) => Promise<unknown>;
+  loadChat?: (connection: ConnectToServerResult, chatId: string) => Promise<LoadChatForDisplayResult>;
+  loadRecentChats?: (connection: ConnectToServerResult) => Promise<ChatSummary[]>;
   restoreConnection?: () => Promise<RestoreSavedConnectionResult>;
   sendMessage?: (input: AppSendMessageInput) => Promise<SendPersistedMessageResult>;
 };
@@ -66,9 +71,31 @@ const defaultSendMessage = ({
   });
 };
 
+const createClient = (connection: ConnectToServerResult): OpenWebUIClient =>
+  new OpenWebUIClient({
+    baseUrl: connection.server.baseUrl,
+    getToken: () => connection.session.token
+  });
+
+const defaultLoadRecentChats = (connection: ConnectToServerResult): Promise<ChatSummary[]> =>
+  listRecentChats({
+    client: createClient(connection)
+  });
+
+const defaultLoadChat = (
+  connection: ConnectToServerResult,
+  chatId: string
+): Promise<LoadChatForDisplayResult> =>
+  loadChatForDisplay({
+    chatId,
+    client: createClient(connection)
+  });
+
 export function App({
   connect = connectToServer,
   forgetSavedServer = forgetServerConnection,
+  loadChat = defaultLoadChat,
+  loadRecentChats = defaultLoadRecentChats,
   restoreConnection = restoreSavedConnection,
   sendMessage = defaultSendMessage
 }: AppProps) {
@@ -85,6 +112,9 @@ export function App({
   const [activeChat, setActiveChat] = useState<ChatTree>();
   const [savedServerId, setSavedServerId] = useState<string>();
   const [isRestoring, setIsRestoring] = useState(true);
+  const [isLoadingRecentChats, setIsLoadingRecentChats] = useState(false);
+  const [isRecentChatsOpen, setIsRecentChatsOpen] = useState(false);
+  const [recentChats, setRecentChats] = useState<ChatSummary[]>([]);
 
   useEffect(() => {
     let isMounted = true;
@@ -150,6 +180,8 @@ export function App({
       setSavedServerId(result.server.id);
       setActiveChat(undefined);
       setChatMessages([]);
+      setRecentChats([]);
+      setIsRecentChatsOpen(false);
       setPassword("");
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
@@ -214,7 +246,52 @@ export function App({
   const handleNewChat = () => {
     setActiveChat(undefined);
     setChatMessages([]);
+    setIsRecentChatsOpen(false);
     setErrorMessage(undefined);
+  };
+
+  const handleRecentChats = async () => {
+    if (!connection) {
+      return;
+    }
+
+    if (isRecentChatsOpen) {
+      setIsRecentChatsOpen(false);
+      return;
+    }
+
+    setIsLoadingRecentChats(true);
+    setErrorMessage(undefined);
+
+    try {
+      const chats = await loadRecentChats(connection);
+      setRecentChats(chats);
+      setIsRecentChatsOpen(true);
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+    } finally {
+      setIsLoadingRecentChats(false);
+    }
+  };
+
+  const handleSelectRecentChat = async (chatId: string) => {
+    if (!connection) {
+      return;
+    }
+
+    setErrorMessage(undefined);
+    setIsLoadingRecentChats(true);
+
+    try {
+      const result = await loadChat(connection, chatId);
+      setActiveChat(result.chat);
+      setChatMessages(result.messages);
+      setIsRecentChatsOpen(false);
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+    } finally {
+      setIsLoadingRecentChats(false);
+    }
   };
 
   const handleForgetSavedServer = async () => {
@@ -235,6 +312,16 @@ export function App({
       <header className="top-bar">
         <span className="brand-mark" aria-hidden="true" />
         <span className="brand-name">Open WebUI</span>
+        {connection ? (
+          <button
+            className="top-bar-action"
+            disabled={isLoadingRecentChats || isSending}
+            onClick={handleRecentChats}
+            type="button"
+          >
+            {isLoadingRecentChats ? "Loading..." : "Recent chats"}
+          </button>
+        ) : null}
       </header>
 
       {connection ? (
@@ -243,6 +330,24 @@ export function App({
             <p className="eyebrow">Server</p>
             <h1 id="ready-title">Ready</h1>
             <p className="server-name">{connection.server.displayName}</p>
+            {isRecentChatsOpen ? (
+              <div className="recent-chat-list" aria-label="Recent chats">
+                {recentChats.length > 0 ? (
+                  recentChats.map((chat) => (
+                    <button
+                      className="recent-chat-item"
+                      key={chat.id}
+                      onClick={() => void handleSelectRecentChat(chat.id)}
+                      type="button"
+                    >
+                      {chat.title}
+                    </button>
+                  ))
+                ) : (
+                  <p className="server-name">No recent chats yet.</p>
+                )}
+              </div>
+            ) : null}
             <label className="field-label" htmlFor="model">
               Model
             </label>

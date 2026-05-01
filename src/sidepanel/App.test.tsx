@@ -2,6 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { App } from "./App";
+import type { ChatSummary } from "../lib/openwebui/types";
 import type {
   ConnectToServerResult,
   RestoreSavedConnectionResult
@@ -260,4 +261,84 @@ test("connected user can send a prompt and see streamed assistant text", async (
     })
   );
   expect(await screen.findByText("Fresh answer")).toBeInTheDocument();
+});
+
+test("connected user can open recent chats, load one, and continue it", async () => {
+  const recentChats: ChatSummary[] = [
+    { id: "chat-recent", title: "Recent project chat", updatedAt: 1714528800 }
+  ];
+  const loadedChat = {
+    id: "chat-recent",
+    title: "Recent project chat",
+    currentId: "assistant-1",
+    messages: {
+      "user-1": { id: "user-1", role: "user", content: "Earlier question" },
+      "assistant-1": { id: "assistant-1", role: "assistant", content: "Earlier answer" }
+    }
+  };
+  const connect = vi.fn().mockResolvedValue(connectionResult);
+  const loadRecentChats = vi.fn(async () => recentChats);
+  const loadChat = vi.fn(async () => ({
+    chat: loadedChat,
+    messages: [
+      { id: "user-1", role: "user" as const, content: "Earlier question" },
+      { id: "assistant-1", role: "assistant" as const, content: "Earlier answer" }
+    ]
+  }));
+  const sendMessage = vi.fn(async ({ onContent }) => {
+    onContent("Continued answer");
+    return {
+      assistantText: "Continued answer",
+      chatId: "chat-recent",
+      refreshedChat: loadedChat
+    };
+  });
+
+  render(
+    <App
+      connect={connect}
+      loadChat={loadChat}
+      loadRecentChats={loadRecentChats}
+      restoreConnection={emptyRestore}
+      sendMessage={sendMessage}
+    />
+  );
+
+  fireEvent.change(await screen.findByLabelText("Server URL"), {
+    target: { value: "https://openwebui.example.com" }
+  });
+  fireEvent.change(screen.getByLabelText("Email or username"), {
+    target: { value: "ada@example.com" }
+  });
+  fireEvent.change(screen.getByLabelText("Password"), {
+    target: { value: "secret" }
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+  expect(await screen.findByRole("heading", { name: "Ready" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Recent chats" }));
+
+  expect(await screen.findByRole("button", { name: "Recent project chat" })).toBeInTheDocument();
+  expect(loadRecentChats).toHaveBeenCalledWith(connectionResult);
+
+  fireEvent.click(screen.getByRole("button", { name: "Recent project chat" }));
+
+  expect(await screen.findByText("Earlier question")).toBeInTheDocument();
+  expect(screen.getByText("Earlier answer")).toBeInTheDocument();
+  expect(loadChat).toHaveBeenCalledWith(connectionResult, "chat-recent");
+
+  fireEvent.change(screen.getByLabelText("Message"), {
+    target: { value: "Continue this" }
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+  await waitFor(() => {
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        activeChat: expect.objectContaining({ id: "chat-recent" }),
+        prompt: "Continue this"
+      })
+    );
+  });
+  expect(await screen.findByText("Continued answer")).toBeInTheDocument();
 });

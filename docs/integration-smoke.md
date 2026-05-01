@@ -164,3 +164,23 @@ Expected:
 - Follow-up sends reuse the active chat id.
 - Model switching changes the next completion model but does not reset the active chat.
 - Only the explicit "New chat" action starts a separate server-side chat after a chat is active.
+
+## Manual Recent Chats Smoke
+
+Run this after loading recent server-side chats into the side panel.
+
+1. Run `npm run smoke:build`.
+2. Load or reload the unpacked extension from `dist`.
+3. Open the side panel and restore or connect to the target Open WebUI server.
+4. Click "Recent chats".
+5. Confirm recent server-side chat titles appear.
+6. Select one recent chat.
+7. Confirm its user and assistant messages load into the side panel.
+8. Send a follow-up message.
+9. Confirm the Open WebUI website updates the same selected chat instead of creating a separate chat.
+
+Expected:
+
+- Recent chats are fetched from `/api/v1/chats/`.
+- Selecting a recent chat fetches `/api/v1/chats/:id`.
+- Follow-up sends use the selected chat as the active server-side chat.
