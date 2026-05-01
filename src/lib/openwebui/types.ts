@@ -14,6 +14,25 @@ export interface OpenWebUIUser {
   [key: string]: unknown;
 }
 
+export type OpenWebUIErrorCode =
+  | "ServerUnreachableError"
+  | "NotOpenWebUIError"
+  | "AuthFailedError"
+  | "TokenExpiredError"
+  | "ModelUnavailableError";
+
+export class OpenWebUIError extends Error {
+  readonly code: OpenWebUIErrorCode;
+  readonly status?: number;
+
+  constructor(code: OpenWebUIErrorCode, message: string, status?: number) {
+    super(message);
+    this.name = "OpenWebUIError";
+    this.code = code;
+    this.status = status;
+  }
+}
+
 export interface SessionRecord {
   serverId: string;
   token: string;
