@@ -48,7 +48,8 @@ function buildUserMessage({ modelId, prompt, timestamp, userMessageId }) {
     role: "user",
     content: prompt,
     timestamp,
-    models: [modelId]
+    models: [modelId],
+    childrenIds: []
   };
 }
 
@@ -65,12 +66,16 @@ function buildAssistantMessage({
     role: "assistant",
     content,
     timestamp,
+    childrenIds: [],
+    model: modelId,
     modelName: modelId,
-    modelIdx: 0
+    modelIdx: 0,
+    done: false
   };
 }
 
 export function buildInitialChatMutation({
+  assistantMessageId,
   modelId,
   prompt,
   title,
@@ -78,16 +83,25 @@ export function buildInitialChatMutation({
   userMessageId
 }) {
   const userMessage = buildUserMessage({ modelId, prompt, timestamp, userMessageId });
+  const assistantMessage = buildAssistantMessage({
+    assistantMessageId,
+    modelId,
+    timestamp: timestamp + 1,
+    userMessageId
+  });
+  userMessage.childrenIds = [assistantMessageId];
 
   return {
     chat: {
       title,
       models: [modelId],
-      messages: [userMessage],
+      currentId: assistantMessageId,
+      messages: [userMessage, assistantMessage],
       history: {
-        currentId: userMessageId,
+        currentId: assistantMessageId,
         messages: {
-          [userMessageId]: userMessage
+          [userMessageId]: userMessage,
+          [assistantMessageId]: assistantMessage
         }
       }
     }
@@ -111,17 +125,37 @@ export function buildAssistantPlaceholderMutation({
     timestamp,
     userMessageId
   });
+  const nextMessages = existingMessages.map((message) => {
+    if (!isRecord(message) || message.id !== userMessageId) {
+      return message;
+    }
+
+    return {
+      ...message,
+      childrenIds: [assistantMessageId]
+    };
+  });
+  const nextHistoryMessages = { ...historyMessages };
+  const parentMessage = nextHistoryMessages[userMessageId];
+
+  if (isRecord(parentMessage)) {
+    nextHistoryMessages[userMessageId] = {
+      ...parentMessage,
+      childrenIds: [assistantMessageId]
+    };
+  }
 
   return {
     chat: {
       ...currentChat,
       models: Array.isArray(currentChat.models) ? currentChat.models : [modelId],
-      messages: [...existingMessages, assistantMessage],
+      currentId: assistantMessageId,
+      messages: [...nextMessages, assistantMessage],
       history: {
         ...history,
         currentId: assistantMessageId,
         messages: {
-          ...historyMessages,
+          ...nextHistoryMessages,
           [assistantMessageId]: assistantMessage
         }
       }
@@ -152,6 +186,66 @@ export function buildCompletedMutation({
     model: modelId,
     message: assistantMessage
   };
+}
+
+export function buildCompletionRequest({
+  assistantMessageId,
+  chatId,
+  features = {
+    web_search: false,
+    image_generation: false,
+    code_interpreter: false,
+    memory: false
+  },
+  modelId,
+  modelItem,
+  prompt,
+  sessionId,
+  userMessage,
+  userMessageId
+}) {
+  return {
+    stream: true,
+    model: modelId,
+    chat_id: chatId,
+    id: assistantMessageId,
+    session_id: sessionId,
+    parent_id: userMessageId,
+    messages: [{ role: "user", content: prompt }],
+    user_message: userMessage,
+    model_item: modelItem,
+    features,
+    params: {},
+    variables: {},
+    metadata: {
+      variables: {}
+    },
+    stream_options: {
+      include_usage: true
+    },
+    background_tasks: {
+      title_generation: true,
+      tags_generation: false,
+      follow_up_generation: false
+    },
+    tool_servers: []
+  };
+}
+
+export function selectAssistantText({ streamedText, persistedText, diagnostics }) {
+  if (streamedText.trim()) {
+    return streamedText;
+  }
+
+  if (persistedText.trim()) {
+    return persistedText;
+  }
+
+  const previews = diagnostics.previews.join(" | ") || "no data lines";
+  throw new Error(
+    `Assistant response did not include text content ` +
+      `(data lines: ${diagnostics.dataLines}, empty content events: ${diagnostics.emptyContentEvents}, done seen: ${diagnostics.doneSeen}, previews: ${previews})`
+  );
 }
 
 export function findPersistedAssistantText(chatDetail, assistantMessageId) {
@@ -198,7 +292,7 @@ async function requestStream(baseUrl, path, options = {}) {
   return response.body;
 }
 
-function extractContentFromData(data) {
+export function extractContentFromData(data) {
   if (data === "[DONE]") {
     return { done: true, content: "" };
   }
@@ -217,6 +311,7 @@ function extractContentFromData(data) {
   const content =
     parsed?.choices?.[0]?.delta?.content ??
     parsed?.choices?.[0]?.message?.content ??
+    parsed?.data?.content ??
     parsed?.content ??
     "";
 
@@ -231,6 +326,12 @@ async function readAssistantText(stream, options) {
   const decoder = new TextDecoder();
   let buffer = "";
   let assistantText = "";
+  const diagnostics = {
+    dataLines: 0,
+    doneSeen: false,
+    emptyContentEvents: 0,
+    previews: []
+  };
 
   while (true) {
     const { value, done } = await reader.read();
@@ -247,11 +348,21 @@ async function readAssistantText(stream, options) {
         continue;
       }
 
-      const event = extractContentFromData(line.slice(5).trim());
-      if (event.done) {
-        return assistantText;
+      const data = line.slice(5).trim();
+      diagnostics.dataLines += 1;
+      if (diagnostics.previews.length < 5) {
+        diagnostics.previews.push(data.slice(0, 240));
       }
 
+      const event = extractContentFromData(data);
+      if (event.done) {
+        diagnostics.doneSeen = true;
+        return { text: assistantText, diagnostics };
+      }
+
+      if (!event.content) {
+        diagnostics.emptyContentEvents += 1;
+      }
       assistantText += event.content;
       if (assistantText.length > options.maxCharacters) {
         throw new Error(
@@ -261,7 +372,7 @@ async function readAssistantText(stream, options) {
     }
   }
 
-  return assistantText;
+  return { text: assistantText, diagnostics };
 }
 
 function getCreatedChatId(createdChat) {
@@ -332,8 +443,9 @@ async function main() {
     const userMessageId = crypto.randomUUID();
     const assistantMessageId = crypto.randomUUID();
     const sessionId = crypto.randomUUID();
-    const now = Date.now();
+    const now = Math.floor(Date.now() / 1000);
     const initialPayload = buildInitialChatMutation({
+      assistantMessageId,
       modelId,
       prompt,
       title,
@@ -351,64 +463,54 @@ async function main() {
     });
     const chatId = getCreatedChatId(createdChat);
     console.log(`- chat created: ${chatId}`);
+    console.log("- assistant placeholder: created with chat");
 
-    await requestJson(baseUrl, `/api/v1/chats/${encodeURIComponent(chatId)}`, {
-      method: "POST",
-      headers: {
-        ...authHeaders,
-        "content-type": "application/json"
-      },
-      body: JSON.stringify(
-        buildAssistantPlaceholderMutation({
-          assistantMessageId,
-          chat: readChat(createdChat),
-          modelId,
-          timestamp: now + 1,
-          userMessageId
-        })
-      ),
-      signal: controller.signal
-    });
-    console.log("- assistant placeholder: ok");
+    const modelItem = await requestJson(
+      baseUrl,
+      `/api/v1/models/model?id=${encodeURIComponent(modelId)}`,
+      {
+        headers: authHeaders,
+        signal: controller.signal
+      }
+    );
+    console.log("- model detail: ok");
 
+    const userMessage = readChat(initialPayload).history.messages[userMessageId];
     const stream = await requestStream(baseUrl, "/api/chat/completions", {
       method: "POST",
       headers: {
         ...authHeaders,
         "content-type": "application/json"
       },
-      body: JSON.stringify({
-        stream: true,
-        model: modelId,
-        chat_id: chatId,
-        id: assistantMessageId,
-        session_id: sessionId,
-        parent_id: userMessageId,
-        messages: [{ role: "user", content: prompt }],
-        features: {
-          web_search: false,
-          image_generation: false,
-          code_interpreter: false,
-          memory: false
-        },
-        params: {},
-        variables: {},
-        metadata: {
-          variables: {}
-        },
-        stream_options: {
-          include_usage: true
-        },
-        background_tasks: {},
-        tool_servers: []
-      }),
+      body: JSON.stringify(
+        buildCompletionRequest({
+          assistantMessageId,
+          chatId,
+          modelId,
+          modelItem,
+          prompt,
+          sessionId,
+          userMessage,
+          userMessageId
+        })
+      ),
       signal: controller.signal
     });
 
-    const assistantText = await readAssistantText(stream, { maxCharacters });
-    if (!assistantText.trim()) {
-      throw new Error("Assistant response did not include text content");
-    }
+    const streamResult = await readAssistantText(stream, { maxCharacters });
+    const refetchedChatBeforeComplete = await requestJson(
+      baseUrl,
+      `/api/v1/chats/${encodeURIComponent(chatId)}`,
+      {
+        headers: authHeaders,
+        signal: controller.signal
+      }
+    );
+    const assistantText = selectAssistantText({
+      streamedText: streamResult.text,
+      persistedText: findPersistedAssistantText(refetchedChatBeforeComplete, assistantMessageId),
+      diagnostics: streamResult.diagnostics
+    });
     console.log(`- assistant text chars: ${assistantText.length}`);
     console.log(`- assistant preview: ${assistantText.slice(0, 200).replace(/\s+/g, " ")}`);
 

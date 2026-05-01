@@ -7,6 +7,19 @@ test("parseSSELine extracts OpenAI delta content", () => {
   });
 });
 
+test("parseSSELine extracts Open WebUI event-style content", () => {
+  expect(
+    parseSSELine('data: {"type":"chat:message:delta","data":{"content":"ok"}}')
+  ).toEqual({
+    type: "content",
+    content: "ok"
+  });
+  expect(parseSSELine('data: {"type":"message","data":{"content":"done"}}')).toEqual({
+    type: "content",
+    content: "done"
+  });
+});
+
 test("parseSSELine handles done, status, usage, error, and raw text", () => {
   expect(parseSSELine("data: [DONE]")).toEqual({ type: "done" });
   expect(parseSSELine('data: {"status":"Searching"}')).toEqual({
