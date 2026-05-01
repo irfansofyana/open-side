@@ -84,7 +84,7 @@ Known-good result:
 
 ## Persistent Chat Smoke
 
-Run this before wiring persistence into the side panel. It creates a real chat, inserts the assistant placeholder required by Open WebUI history, streams one assistant response, calls `/api/chat/completed`, then refetches the chat and confirms the assistant text persisted.
+Run this before wiring persistence into the side panel. It creates a real chat with the linked user message and assistant placeholder required by Open WebUI history, triggers one assistant response, polls the chat when the HTTP stream is empty, calls `/api/chat/completed`, then refetches the chat and confirms the assistant text persisted.
 
 ```bash
 OPENWEBUI_URL=http://localhost:3000 \
@@ -101,6 +101,8 @@ Optional controls:
 OPENWEBUI_CHAT_PROMPT='Reply with exactly: persist-ok'
 OPENWEBUI_CHAT_TIMEOUT_MS=60000
 OPENWEBUI_CHAT_MAX_CHARS=2000
+OPENWEBUI_CHAT_POLL_ATTEMPTS=15
+OPENWEBUI_CHAT_POLL_INTERVAL_MS=2000
 ```
 
 Expected:
@@ -108,12 +110,21 @@ Expected:
 - Local sign-in succeeds.
 - The selected model id exists in `/api/models`.
 - `/api/v1/chats/new` creates a chat.
-- `/api/v1/chats/:id` accepts the assistant placeholder update.
-- `/api/chat/completions` streams assistant text.
+- `/api/v1/models/model?id=...` returns model detail, or the script falls back to the selected `/api/models` item.
+- `/api/chat/completions` triggers the assistant response.
+- Direct HTTP stream text or polling `/api/v1/chats/:id` returns assistant text.
 - `/api/chat/completed` finalizes the assistant message.
 - Refetching `/api/v1/chats/:id` returns persisted assistant content.
 
 The command does not print the token or password. It intentionally creates visible server-side chat history, so keep it separate from read-only and direct streaming smoke checks.
+
+Known-good result:
+
+- `https://ai.irfansp.dev`
+- `openrouter.anthropic/claude-haiku-4.5`
+- `/api/v1/models/model?id=...` returned `404`, and the script fell back to the selected `/api/models` item.
+- The HTTP stream returned no `data:` lines, and polling found `open-webui-extension-persist-ok` after 3 polls.
+- `/api/chat/completed` finalized successfully and refetch returned 31 persisted characters.
 
 ## Manual Chrome Smoke
 
