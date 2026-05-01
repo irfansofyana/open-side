@@ -82,6 +82,39 @@ Known-good result:
 - `openrouter.anthropic/claude-haiku-4.5`
 - Direct `/api/chat/completions` streaming returned `open-webui-extension-smoke-ok`.
 
+## Persistent Chat Smoke
+
+Run this before wiring persistence into the side panel. It creates a real chat, inserts the assistant placeholder required by Open WebUI history, streams one assistant response, calls `/api/chat/completed`, then refetches the chat and confirms the assistant text persisted.
+
+```bash
+OPENWEBUI_URL=http://localhost:3000 \
+OPENWEBUI_EMAIL=user@example.com \
+OPENWEBUI_PASSWORD='password' \
+OPENWEBUI_CHAT_MODEL_ID='fast-short-response-model' \
+OPENWEBUI_CHAT_PERSIST=1 \
+npm run smoke:chat:persist
+```
+
+Optional controls:
+
+```bash
+OPENWEBUI_CHAT_PROMPT='Reply with exactly: persist-ok'
+OPENWEBUI_CHAT_TIMEOUT_MS=60000
+OPENWEBUI_CHAT_MAX_CHARS=2000
+```
+
+Expected:
+
+- Local sign-in succeeds.
+- The selected model id exists in `/api/models`.
+- `/api/v1/chats/new` creates a chat.
+- `/api/v1/chats/:id` accepts the assistant placeholder update.
+- `/api/chat/completions` streams assistant text.
+- `/api/chat/completed` finalizes the assistant message.
+- Refetching `/api/v1/chats/:id` returns persisted assistant content.
+
+The command does not print the token or password. It intentionally creates visible server-side chat history, so keep it separate from read-only and direct streaming smoke checks.
+
 ## Manual Chrome Smoke
 
 1. Run `npm run smoke:build`.
