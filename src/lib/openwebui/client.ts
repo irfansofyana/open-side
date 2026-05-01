@@ -1,5 +1,7 @@
 import {
   type ChatCompletionRequest,
+  type ChatMutationPayload,
+  type ChatMutationResult,
   type ChatSummary,
   type ChatTree,
   OpenWebUIError,
@@ -210,6 +212,48 @@ export class OpenWebUIClient {
       pinned: typeof chat.pinned === "boolean" ? chat.pinned : undefined,
       raw: chat
     };
+  }
+
+  async createChat(payload: ChatMutationPayload): Promise<ChatMutationResult> {
+    const data = await this.request("/api/v1/chats/new", {
+      auth: true,
+      body: JSON.stringify(payload),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+
+    return isRecord(data) ? data : {};
+  }
+
+  async updateChat(
+    chatId: string,
+    payload: ChatMutationPayload
+  ): Promise<ChatMutationResult> {
+    const data = await this.request(`/api/v1/chats/${encodeURIComponent(chatId)}`, {
+      auth: true,
+      body: JSON.stringify(payload),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+
+    return isRecord(data) ? data : {};
+  }
+
+  async completeChat(payload: ChatMutationPayload): Promise<ChatMutationResult> {
+    const data = await this.request("/api/chat/completed", {
+      auth: true,
+      body: JSON.stringify(payload),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+
+    return isRecord(data) ? data : {};
   }
 
   async streamChatCompletion(

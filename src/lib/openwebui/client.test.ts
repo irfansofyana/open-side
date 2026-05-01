@@ -355,6 +355,85 @@ test("getChat falls back to root messages and then empty messages", async () => 
   });
 });
 
+test("createChat posts caller-provided chat payload", async () => {
+  const payload = {
+    chat: {
+      title: "Extension smoke",
+      messages: {}
+    }
+  };
+  const responseBody = { id: "chat-1", title: "Extension smoke" };
+  fetchMock.mockResolvedValueOnce(jsonResponse(responseBody));
+
+  const client = new OpenWebUIClient({
+    baseUrl: "https://openwebui.example.com",
+    getToken: () => "token-1"
+  });
+
+  await expect(client.createChat(payload)).resolves.toEqual(responseBody);
+  expect(fetchMock).toHaveBeenCalledWith("https://openwebui.example.com/api/v1/chats/new", {
+    body: JSON.stringify(payload),
+    headers: {
+      authorization: "Bearer token-1",
+      "content-type": "application/json"
+    },
+    method: "POST"
+  });
+});
+
+test("updateChat URL-encodes chat id and posts caller-provided chat payload", async () => {
+  const payload = {
+    chat: {
+      currentId: "assistant-1"
+    }
+  };
+  const responseBody = { id: "folder/chat 1", title: "Updated chat" };
+  fetchMock.mockResolvedValueOnce(jsonResponse(responseBody));
+
+  const client = new OpenWebUIClient({
+    baseUrl: "https://openwebui.example.com",
+    getToken: () => "token-1"
+  });
+
+  await expect(client.updateChat("folder/chat 1", payload)).resolves.toEqual(responseBody);
+  expect(fetchMock).toHaveBeenCalledWith(
+    "https://openwebui.example.com/api/v1/chats/folder%2Fchat%201",
+    {
+      body: JSON.stringify(payload),
+      headers: {
+        authorization: "Bearer token-1",
+        "content-type": "application/json"
+      },
+      method: "POST"
+    }
+  );
+});
+
+test("completeChat posts caller-provided completion payload", async () => {
+  const payload = {
+    chat_id: "chat-1",
+    message_id: "assistant-1",
+    messages: [{ id: "assistant-1", role: "assistant", content: "Done" }]
+  };
+  const responseBody = { chat_id: "chat-1", message_id: "assistant-1" };
+  fetchMock.mockResolvedValueOnce(jsonResponse(responseBody));
+
+  const client = new OpenWebUIClient({
+    baseUrl: "https://openwebui.example.com",
+    getToken: () => "token-1"
+  });
+
+  await expect(client.completeChat(payload)).resolves.toEqual(responseBody);
+  expect(fetchMock).toHaveBeenCalledWith("https://openwebui.example.com/api/chat/completed", {
+    body: JSON.stringify(payload),
+    headers: {
+      authorization: "Bearer token-1",
+      "content-type": "application/json"
+    },
+    method: "POST"
+  });
+});
+
 test("streamChatCompletion posts Open WebUI payload and returns response body", async () => {
   const stream = new ReadableStream<Uint8Array>();
   fetchMock.mockResolvedValueOnce(new Response(stream, { status: 200 }));

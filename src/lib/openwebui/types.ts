@@ -99,6 +99,10 @@ export interface ChatTree {
   raw?: Record<string, unknown>;
 }
 
+export type ChatMutationPayload = Record<string, unknown>;
+
+export type ChatMutationResult = Record<string, unknown>;
+
 export type ChatCompletionRequest = {
   stream: true;
   model: string;
