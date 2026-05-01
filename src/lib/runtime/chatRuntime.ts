@@ -12,7 +12,7 @@ type StreamingClient = {
   ) => Promise<ReadableStream<Uint8Array>>;
 };
 
-type SendStreamingMessageInput = Omit<
+export type SendStreamingMessageInput = Omit<
   BuildCompletionPayloadInput,
   "messages" | "userMessage"
 > & {
@@ -23,7 +23,7 @@ type SendStreamingMessageInput = Omit<
   onEvent?: (event: StreamEvent) => void;
 };
 
-type SendStreamingMessageResult = {
+export type SendStreamingMessageResult = {
   assistantText: string;
 };
 

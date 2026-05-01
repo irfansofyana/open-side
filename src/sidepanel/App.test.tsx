@@ -86,3 +86,44 @@ test("failed submit renders error message", async () => {
 
   expect(await screen.findByRole("alert")).toHaveTextContent("Unable to connect");
 });
+
+test("connected user can send a prompt and see streamed assistant text", async () => {
+  const connect = vi.fn().mockResolvedValue(connectionResult);
+  const sendMessage = vi.fn(async ({ onContent }) => {
+    onContent("Hello ");
+    onContent("from Open WebUI");
+    return { assistantText: "Hello from Open WebUI" };
+  });
+
+  render(<App connect={connect} sendMessage={sendMessage} />);
+
+  fireEvent.change(screen.getByLabelText("Server URL"), {
+    target: { value: "https://openwebui.example.com" }
+  });
+  fireEvent.change(screen.getByLabelText("Email or username"), {
+    target: { value: "ada@example.com" }
+  });
+  fireEvent.change(screen.getByLabelText("Password"), {
+    target: { value: "secret" }
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+  expect(await screen.findByRole("heading", { name: "Ready" })).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("Message"), {
+    target: { value: "Say hello" }
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+  await waitFor(() => {
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelId: "llama3.1",
+        prompt: "Say hello"
+      })
+    );
+  });
+  expect(screen.getByText("Say hello")).toBeInTheDocument();
+  expect(await screen.findByText("Hello from Open WebUI")).toBeInTheDocument();
+  expect(screen.getByLabelText("Message")).toHaveValue("");
+});
