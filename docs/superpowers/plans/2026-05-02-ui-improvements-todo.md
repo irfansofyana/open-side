@@ -10,39 +10,43 @@
 
 ## Side Panel Layout
 
-- [ ] Replace the current prototype panels with a denser Gemini-like side panel layout.
-- [ ] Move model selection and New chat into a compact top/composer control area.
-- [ ] Keep the composer pinned and comfortable at common side-panel heights.
-- [ ] Ensure the message list scrolls naturally without hiding the composer.
-- [ ] Add empty/welcome state prompt suggestions only when no chat is active.
+- [x] Replace the current prototype panels with a denser Gemini-like side panel layout.
+- [x] Move model selection and New chat into a compact chat control area.
+- [x] Keep the composer pinned and comfortable at common side-panel heights.
+- [x] Ensure the message list scrolls naturally without hiding the composer.
+- [x] Add empty/welcome state prompt suggestions only when no chat is active.
 
 ## Chat Experience
 
-- [ ] Render assistant markdown instead of plain text.
+- [x] Render assistant markdown instead of plain text.
 - [ ] Add code block styling with copy affordance.
-- [ ] Add clear streaming state for the active assistant message.
-- [ ] Distinguish polling fallback from active token streaming only if useful for debugging or user trust.
-- [ ] Improve message spacing, typography, and contrast for long conversations.
+- [x] Add syntax-highlighted code block styling.
+- [x] Render GFM task checklists and tables.
+- [x] Render Open WebUI reasoning/thinking blocks.
+- [x] Add clear streaming state for the active assistant message.
+- [x] Stream persisted polling deltas when direct HTTP stream content is empty.
+- [ ] Distinguish polling fallback from active token streaming in the UI only if useful for debugging or user trust.
+- [x] Improve message spacing, typography, and contrast for long conversations.
 - [ ] Add timestamps or subtle metadata only if it helps scanability.
 
 ## Saved Session And Connection UX
 
-- [ ] Polish the "Restoring session" state so it feels intentional, not like a blank loading screen.
+- [x] Polish the "Restoring session" state so it feels intentional, not like a blank loading screen.
 - [ ] Make re-login state clear when the token expired while preserving saved server URL and email.
 - [ ] Place "Forget saved server" in a settings/account area once the top menu exists.
 - [ ] Add logout once session clearing has a dedicated UI path.
 
 ## Chat Navigation
 
-- [ ] Add a top menu for recent chats.
-- [ ] Highlight the active chat in the recent chat list.
+- [x] Add a top menu for recent chats.
+- [x] Highlight the active chat in the recent chat list.
 - [ ] Add "More" history view with fuller server-side history.
 - [ ] Load selected chat messages into the side panel with an obvious active state.
 - [ ] Make New chat visually explicit but not dominant over continuing the current chat.
 
 ## Model And Tools Controls
 
-- [ ] Improve model selector for long model names.
+- [x] Improve model selector for long model names.
 - [ ] Keep model switching clear inside the same active chat session.
 - [ ] Add tools menu with server-provided tools and built-in feature toggles.
 - [ ] Show selected tools/features near the composer without crowding it.
@@ -58,9 +62,9 @@
 
 - [ ] Verify keyboard navigation for connect, model selector, New chat, composer, menus, and history.
 - [ ] Add focus states that are visible in dark mode.
-- [ ] Check button and control labels with Testing Library queries.
-- [ ] Ensure text never overflows buttons, controls, or message cards at 320px width.
-- [ ] Avoid layout shift when messages stream or status text changes.
+- [x] Check button and control labels with Testing Library queries.
+- [x] Ensure text never overflows buttons, controls, or message cards at 320px width.
+- [x] Avoid layout shift when messages stream or status text changes.
 
 ## Manual Visual Checks
 

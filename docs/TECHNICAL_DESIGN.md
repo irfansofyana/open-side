@@ -436,8 +436,12 @@ MVP rendering:
 - markdown
 - code blocks
 - links
+- GFM tables and task checklists
+- Open WebUI reasoning/thinking blocks
 - status/progress rows
 - source snippets if provided
+
+The side panel renders assistant text with React markdown plus GFM and syntax highlighting plugins. Open WebUI reasoning is handled before markdown rendering: persisted `<details type="reasoning">...</details>`, common text tags such as `<think>...</think>`, `<thinking>...</thinking>`, `<reason>...</reason>`, `<reasoning>...</reasoning>`, `<thought>...</thought>`, and streamed reasoning fields such as `reasoning_content`, `reasoning`, or `thinking` become a collapsible reasoning panel. Unrecognized raw HTML remains text instead of mounting executable or styled DOM. User-authored messages remain plain text in the MVP UI.
 
 Follow-up rendering:
 

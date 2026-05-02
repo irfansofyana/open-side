@@ -63,6 +63,35 @@ test("sendStreamingMessage builds payload, streams content, and returns assistan
   expect(eventTypes).toEqual(["content", "content", "done"]);
 });
 
+test("sendStreamingMessage preserves reasoning chunks in the assistant text stream", async () => {
+  const client = {
+    streamChatCompletion: vi.fn(async () =>
+      createStream([
+        'data: {"choices":[{"delta":{"reasoning_content":"I should think"}}]}\n\n',
+        'data: {"choices":[{"delta":{"content":"Final"}}]}\n\n',
+        "data: [DONE]\n\n"
+      ])
+    )
+  };
+  const contentChunks: string[] = [];
+  const eventTypes: string[] = [];
+
+  await expect(
+    sendStreamingMessage({
+      client,
+      modelId: "deepseek-reasoner",
+      prompt: "Think",
+      onContent: (content) => contentChunks.push(content),
+      onEvent: (event) => eventTypes.push(event.type)
+    })
+  ).resolves.toEqual({
+    assistantText: "<think>I should think</think>\n\nFinal"
+  });
+
+  expect(contentChunks).toEqual(["<think>", "I should think", "</think>\n\n", "Final"]);
+  expect(eventTypes).toEqual(["reasoning", "content", "done"]);
+});
+
 test("sendStreamingMessage forwards payload options and throws on stream error event", async () => {
   const client = {
     streamChatCompletion: vi.fn(async () =>
@@ -133,6 +162,7 @@ test("sendPersistedMessage creates linked chat, polls persisted text when stream
           }
         }
       })
+      .mockResolvedValueOnce(chatDetail)
       .mockResolvedValueOnce(chatDetail),
     completeChat: vi.fn(async () => ({ ok: true }))
   };
@@ -227,8 +257,96 @@ test("sendPersistedMessage creates linked chat, polls persisted text when stream
       })
     })
   );
-  expect(client.getChat).toHaveBeenCalledTimes(3);
+  expect(client.getChat).toHaveBeenCalledTimes(4);
   expect(contentChunks).toEqual(["persisted ok"]);
+});
+
+test("sendPersistedMessage streams persisted polling deltas before completion finishes", async () => {
+  const finalChat: ChatTree = {
+    id: "chat-1",
+    title: "Extension smoke",
+    currentId: "assistant-1",
+    messages: {
+      "assistant-1": { id: "assistant-1", role: "assistant", content: "Hello streaming world" }
+    }
+  };
+  const client = {
+    createChat: vi.fn(async () => ({ id: "chat-1" })),
+    updateChat: vi.fn(async () => ({ id: "chat-1" })),
+    streamChatCompletion: vi.fn(
+      async () =>
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            setTimeout(() => controller.close(), 40);
+          }
+        })
+    ),
+    getChat: vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: "chat-1",
+        title: "Extension smoke",
+        messages: {
+          "assistant-1": {
+            id: "assistant-1",
+            role: "assistant",
+            content: "Hello"
+          }
+        }
+      })
+      .mockResolvedValueOnce({
+        id: "chat-1",
+        title: "Extension smoke",
+        messages: {
+          "assistant-1": {
+            id: "assistant-1",
+            role: "assistant",
+            content: "Hello streaming"
+          }
+        }
+      })
+      .mockResolvedValueOnce({
+        id: "chat-1",
+        title: "Extension smoke",
+        messages: {
+          "assistant-1": {
+            id: "assistant-1",
+            role: "assistant",
+            content: "Hello streaming world"
+          }
+        }
+      })
+      .mockResolvedValueOnce(finalChat),
+    completeChat: vi.fn(async () => ({ ok: true }))
+  };
+  const contentChunks: string[] = [];
+  const delay = vi.fn(async () => undefined);
+
+  await expect(
+    sendPersistedMessage({
+      client,
+      delay,
+      idGenerator: vi
+        .fn()
+        .mockReturnValueOnce("user-1")
+        .mockReturnValueOnce("assistant-1")
+        .mockReturnValueOnce("session-1"),
+      modelId: "openrouter/fast",
+      modelItem: { id: "openrouter/fast", name: "Fast" },
+      now: () => 1714528800000,
+      pollIntervalMs: 5,
+      pollMaxAttempts: 5,
+      prompt: "Say hello",
+      onContent: (content) => contentChunks.push(content)
+    })
+  ).resolves.toEqual({
+    assistantText: "Hello streaming world",
+    chatId: "chat-1",
+    refreshedChat: finalChat
+  });
+
+  expect(contentChunks).toEqual(["Hello", " streaming", " world"]);
+  expect(delay).toHaveBeenCalledWith(5);
 });
 
 test("sendPersistedMessage continues the active chat instead of creating a new one", async () => {
@@ -424,4 +542,89 @@ test("loadChatForDisplay loads a chat and returns ordered user and assistant mes
     ]
   });
   expect(client.getChat).toHaveBeenCalledWith("chat-1");
+});
+
+test("loadChatForDisplay uses history content when Open WebUI array messages are placeholders", async () => {
+  const chat: ChatTree = {
+    id: "chat-1",
+    title: "Loaded chat",
+    currentId: "assistant-2",
+    messages: {},
+    raw: {
+      chat: {
+        messages: [
+          {
+            id: "user-1",
+            role: "user",
+            content: "hellow",
+            timestamp: 1,
+            childrenIds: ["assistant-1"]
+          },
+          {
+            id: "assistant-1",
+            role: "assistant",
+            content: "",
+            timestamp: 2,
+            parentId: "user-1"
+          },
+          {
+            id: "user-2",
+            role: "user",
+            content: "give me markdown example",
+            timestamp: 3,
+            childrenIds: ["assistant-2"]
+          },
+          {
+            id: "assistant-2",
+            role: "assistant",
+            content: "",
+            timestamp: 4,
+            parentId: "user-2"
+          }
+        ],
+        history: {
+          messages: {
+            "user-1": { id: "user-1", role: "user", content: "hellow", timestamp: 1 },
+            "assistant-1": {
+              id: "assistant-1",
+              role: "assistant",
+              content: "Hello! How can I help you today?",
+              timestamp: 2,
+              done: true
+            },
+            "user-2": {
+              id: "user-2",
+              role: "user",
+              content: "give me markdown example",
+              timestamp: 3
+            },
+            "assistant-2": {
+              id: "assistant-2",
+              role: "assistant",
+              content: "## Markdown example\n\n- item one\n- item two",
+              timestamp: 4,
+              done: true
+            }
+          }
+        }
+      }
+    }
+  };
+  const client = {
+    getChat: vi.fn(async () => chat)
+  };
+
+  await expect(loadChatForDisplay({ chatId: "chat-1", client })).resolves.toEqual({
+    chat,
+    messages: [
+      { id: "user-1", role: "user", content: "hellow" },
+      { id: "assistant-1", role: "assistant", content: "Hello! How can I help you today?" },
+      { id: "user-2", role: "user", content: "give me markdown example" },
+      {
+        id: "assistant-2",
+        role: "assistant",
+        content: "## Markdown example\n\n- item one\n- item two"
+      }
+    ]
+  });
 });

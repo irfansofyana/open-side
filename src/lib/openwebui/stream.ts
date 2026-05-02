@@ -34,7 +34,24 @@ export function parseSSELine(line: string): StreamEvent | undefined {
   const message =
     isRecord(firstChoice) && isRecord(firstChoice.message) ? firstChoice.message : undefined;
   const eventData = isRecord(parsed.data) ? parsed.data : undefined;
+  const reasoning =
+    delta?.reasoning_content ??
+    delta?.reasoning ??
+    delta?.thinking ??
+    message?.reasoning_content ??
+    message?.reasoning ??
+    message?.thinking ??
+    parsed.reasoning_content ??
+    parsed.reasoning ??
+    parsed.thinking ??
+    eventData?.reasoning_content ??
+    eventData?.reasoning ??
+    eventData?.thinking;
   const content = delta?.content ?? message?.content ?? parsed.content ?? eventData?.content;
+
+  if (typeof reasoning === "string" && reasoning.length > 0) {
+    return { type: "reasoning", content: reasoning };
+  }
 
   if (typeof content === "string" && content.length > 0) {
     return { type: "content", content };

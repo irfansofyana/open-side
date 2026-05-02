@@ -198,6 +198,23 @@ const getRawChat = (chat: ChatTree): Record<string, unknown> => {
 const getMessageContent = (message: Record<string, unknown>): string | undefined =>
   typeof message.content === "string" ? message.content : undefined;
 
+const getMessageContentWithHistory = (
+  message: Record<string, unknown>,
+  historyMessages: Record<string, unknown>
+): string | undefined => {
+  const content = getMessageContent(message);
+
+  if (content && content.length > 0) {
+    return content;
+  }
+
+  const id = typeof message.id === "string" ? message.id : undefined;
+  const historyMessage = id ? historyMessages[id] : undefined;
+  const historyContent = isRecord(historyMessage) ? getMessageContent(historyMessage) : undefined;
+
+  return historyContent ?? content;
+};
+
 const getMessageRole = (message: Record<string, unknown>): "user" | "assistant" | undefined =>
   message.role === "user" || message.role === "assistant" ? message.role : undefined;
 
@@ -222,8 +239,18 @@ const getRawHistoryMessages = (chat: ChatTree): Record<string, unknown>[] => {
   return Object.values(messages).filter(isRecord);
 };
 
+const getRawHistoryMessagesRecord = (chat: ChatTree): Record<string, unknown> => {
+  const rawChat = chat.raw?.chat;
+  const rawHistory =
+    isRecord(rawChat) && isRecord(rawChat.history) ? rawChat.history.messages : undefined;
+  const messages = isRecord(rawHistory) ? rawHistory : chat.messages;
+
+  return Object.fromEntries(Object.entries(messages).filter((entry): entry is [string, unknown] => isRecord(entry[1])));
+};
+
 const toDisplayMessages = (chat: ChatTree): DisplayChatMessage[] => {
   const rawArrayMessages = getRawMessagesArray(chat);
+  const rawHistoryMessages = getRawHistoryMessagesRecord(chat);
   const sourceMessages = rawArrayMessages.length > 0 ? rawArrayMessages : getRawHistoryMessages(chat);
   const orderedMessages =
     rawArrayMessages.length > 0
@@ -237,7 +264,10 @@ const toDisplayMessages = (chat: ChatTree): DisplayChatMessage[] => {
 
   return orderedMessages.flatMap((message, index) => {
     const role = getMessageRole(message);
-    const content = getMessageContent(message);
+    const content =
+      rawArrayMessages.length > 0
+        ? getMessageContentWithHistory(message, rawHistoryMessages)
+        : getMessageContent(message);
 
     return role && content !== undefined
       ? [{ id: getMessageId(message, index), role, content }]
@@ -400,6 +430,90 @@ const getPersistedAssistantText = (chat: ChatTree, assistantMessageId: string): 
     : "";
 };
 
+const appendContentDelta = ({
+  assistantText,
+  content,
+  onContent
+}: {
+  assistantText: string;
+  content: string;
+  onContent?: (content: string) => void;
+}): string => {
+  const nextText = `${assistantText}${content}`;
+  onContent?.(content);
+
+  return nextText;
+};
+
+const appendReasoningDelta = ({
+  assistantText,
+  content,
+  isReasoningOpen,
+  onContent
+}: {
+  assistantText: string;
+  content: string;
+  isReasoningOpen: boolean;
+  onContent?: (content: string) => void;
+}): { assistantText: string; isReasoningOpen: boolean } => {
+  const prefix = isReasoningOpen ? "" : "<think>";
+
+  if (prefix) {
+    onContent?.(prefix);
+  }
+  onContent?.(content);
+
+  return {
+    assistantText: `${assistantText}${prefix}${content}`,
+    isReasoningOpen: true
+  };
+};
+
+const closeReasoningBlock = ({
+  assistantText,
+  isReasoningOpen,
+  onContent
+}: {
+  assistantText: string;
+  isReasoningOpen: boolean;
+  onContent?: (content: string) => void;
+}): { assistantText: string; isReasoningOpen: boolean } => {
+  if (!isReasoningOpen) {
+    return { assistantText, isReasoningOpen };
+  }
+
+  const suffix = "</think>\n\n";
+  onContent?.(suffix);
+
+  return {
+    assistantText: `${assistantText}${suffix}`,
+    isReasoningOpen: false
+  };
+};
+
+const emitPersistedDelta = ({
+  assistantText,
+  onContent,
+  persistedText
+}: {
+  assistantText: string;
+  onContent?: (content: string) => void;
+  persistedText: string;
+}): string => {
+  if (!persistedText.startsWith(assistantText)) {
+    onContent?.(persistedText);
+    return persistedText;
+  }
+
+  const delta = persistedText.slice(assistantText.length);
+
+  if (delta.length > 0) {
+    onContent?.(delta);
+  }
+
+  return persistedText;
+};
+
 export async function sendStreamingMessage({
   client,
   prompt,
@@ -415,19 +529,39 @@ export async function sendStreamingMessage({
   });
   const stream = await client.streamChatCompletion(payload);
   let assistantText = "";
+  let isReasoningOpen = false;
 
   for await (const event of readStreamEvents(stream)) {
     onEvent?.(event);
 
+    if (event.type === "reasoning") {
+      const result = appendReasoningDelta({
+        assistantText,
+        content: event.content,
+        isReasoningOpen,
+        onContent
+      });
+      assistantText = result.assistantText;
+      isReasoningOpen = result.isReasoningOpen;
+    }
+
     if (event.type === "content") {
-      assistantText += event.content;
-      onContent?.(event.content);
+      const closed = closeReasoningBlock({ assistantText, isReasoningOpen, onContent });
+      assistantText = appendContentDelta({
+        assistantText: closed.assistantText,
+        content: event.content,
+        onContent
+      });
+      isReasoningOpen = closed.isReasoningOpen;
     }
 
     if (event.type === "error") {
       throw new Error(event.message);
     }
   }
+
+  const closed = closeReasoningBlock({ assistantText, isReasoningOpen, onContent });
+  assistantText = closed.assistantText;
 
   return { assistantText };
 }
@@ -522,13 +656,30 @@ export async function sendPersistedMessage({
   });
   const stream = await client.streamChatCompletion(completionPayload);
   let assistantText = "";
+  let isReasoningOpen = false;
 
   for await (const event of readStreamEvents(stream)) {
     onEvent?.(event);
 
+    if (event.type === "reasoning") {
+      const result = appendReasoningDelta({
+        assistantText,
+        content: event.content,
+        isReasoningOpen,
+        onContent
+      });
+      assistantText = result.assistantText;
+      isReasoningOpen = result.isReasoningOpen;
+    }
+
     if (event.type === "content") {
-      assistantText += event.content;
-      onContent?.(event.content);
+      const closed = closeReasoningBlock({ assistantText, isReasoningOpen, onContent });
+      assistantText = appendContentDelta({
+        assistantText: closed.assistantText,
+        content: event.content,
+        onContent
+      });
+      isReasoningOpen = closed.isReasoningOpen;
     }
 
     if (event.type === "error") {
@@ -536,21 +687,40 @@ export async function sendPersistedMessage({
     }
   }
 
+  const closed = closeReasoningBlock({ assistantText, isReasoningOpen, onContent });
+  assistantText = closed.assistantText;
+
   let refreshedChat: ChatTree | undefined;
+  const shouldPollPersistedText = !assistantText.trim();
 
-  if (!assistantText.trim()) {
-    for (let attempt = 1; attempt <= pollMaxAttempts; attempt += 1) {
-      refreshedChat = await client.getChat(chatId);
-      assistantText = getPersistedAssistantText(refreshedChat, assistantMessageId);
+  for (
+    let attempt = 1;
+    shouldPollPersistedText && attempt <= pollMaxAttempts;
+    attempt += 1
+  ) {
+    refreshedChat = await client.getChat(chatId);
+    const persistedText = getPersistedAssistantText(refreshedChat, assistantMessageId);
 
-      if (assistantText.trim()) {
-        onContent?.(assistantText);
-        break;
-      }
+    if (persistedText.trim()) {
+      assistantText = emitPersistedDelta({ assistantText, onContent, persistedText });
+    }
 
-      if (attempt < pollMaxAttempts) {
-        await delay(pollIntervalMs);
-      }
+    const persistedMessage = refreshedChat.messages[assistantMessageId];
+    const isDone =
+      isRecord(persistedMessage) && typeof persistedMessage.done === "boolean"
+        ? persistedMessage.done
+        : false;
+
+    if (assistantText.trim() && isDone) {
+      break;
+    }
+
+    if (assistantText.trim() && attempt >= 3) {
+      break;
+    }
+
+    if (attempt < pollMaxAttempts) {
+      await delay(pollIntervalMs);
     }
   }
 

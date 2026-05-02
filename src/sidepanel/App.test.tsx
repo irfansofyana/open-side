@@ -57,6 +57,7 @@ test("startup restore hides credential form until saved session check finishes",
   render(<App restoreConnection={restoreConnection} />);
 
   expect(screen.getByRole("heading", { name: "Restoring session" })).toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("Checking saved session");
   expect(screen.queryByLabelText("Server URL")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
 
@@ -133,6 +134,26 @@ test("successful submit calls connect function with form values and renders read
   expect(screen.getByRole("option", { name: "Llama 3.1" })).toBeInTheDocument();
   expect(screen.getByRole("option", { name: "mistral" })).toBeInTheDocument();
   expect(screen.queryByDisplayValue("secret")).not.toBeInTheDocument();
+});
+
+test("ready state uses a focused chat shell with empty prompt shortcuts", async () => {
+  const restoreConnection = vi.fn<() => Promise<RestoreSavedConnectionResult>>().mockResolvedValue({
+    status: "ready",
+    connection: connectionResult,
+    selectedModelId: "llama3.1"
+  });
+
+  render(<App restoreConnection={restoreConnection} />);
+
+  expect(await screen.findByRole("heading", { name: "Ready" })).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Chat session" })).toBeInTheDocument();
+  expect(screen.getByRole("log", { name: "Messages" })).toBeInTheDocument();
+  expect(screen.getByText("Start a conversation")).toBeInTheDocument();
+  expect(screen.getByLabelText("Model")).toHaveAttribute("title", "Llama 3.1");
+
+  fireEvent.click(screen.getByRole("button", { name: "Summarize this page" }));
+
+  expect(screen.getByLabelText("Message")).toHaveValue("Summarize the current page.");
 });
 
 test("failed submit renders error message", async () => {
@@ -263,6 +284,55 @@ test("connected user can send a prompt and see streamed assistant text", async (
   expect(await screen.findByText("Fresh answer")).toBeInTheDocument();
 });
 
+test("empty assistant message shows an intentional streaming state", async () => {
+  let resolveSend: (value: {
+    assistantText: string;
+    chatId: string;
+    refreshedChat: { id: string; title: string; messages: Record<string, unknown> };
+  }) => void = () => undefined;
+  const connect = vi.fn().mockResolvedValue(connectionResult);
+  const sendMessage = vi.fn(
+    () =>
+      new Promise<{
+        assistantText: string;
+        chatId: string;
+        refreshedChat: { id: string; title: string; messages: Record<string, unknown> };
+      }>((resolve) => {
+        resolveSend = resolve;
+      })
+  );
+
+  render(<App connect={connect} restoreConnection={emptyRestore} sendMessage={sendMessage} />);
+
+  fireEvent.change(await screen.findByLabelText("Server URL"), {
+    target: { value: "https://openwebui.example.com" }
+  });
+  fireEvent.change(screen.getByLabelText("Email or username"), {
+    target: { value: "ada@example.com" }
+  });
+  fireEvent.change(screen.getByLabelText("Password"), {
+    target: { value: "secret" }
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+  expect(await screen.findByRole("heading", { name: "Ready" })).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("Message"), {
+    target: { value: "Think slowly" }
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+  expect(await screen.findByText("Assistant is responding")).toBeInTheDocument();
+
+  resolveSend({
+    assistantText: "Done",
+    chatId: "chat-1",
+    refreshedChat: { id: "chat-1", title: "Active chat", messages: {} }
+  });
+
+  expect(await screen.findByText("Done")).toBeInTheDocument();
+});
+
 test("connected user can open recent chats, load one, and continue it", async () => {
   const recentChats: ChatSummary[] = [
     { id: "chat-recent", title: "Recent project chat", updatedAt: 1714528800 }
@@ -326,6 +396,13 @@ test("connected user can open recent chats, load one, and continue it", async ()
   expect(await screen.findByText("Earlier question")).toBeInTheDocument();
   expect(screen.getByText("Earlier answer")).toBeInTheDocument();
   expect(loadChat).toHaveBeenCalledWith(connectionResult, "chat-recent");
+
+  fireEvent.click(screen.getByRole("button", { name: "Recent chats" }));
+
+  expect(await screen.findByRole("button", { name: "Recent project chat" })).toHaveAttribute(
+    "aria-current",
+    "true"
+  );
 
   fireEvent.change(screen.getByLabelText("Message"), {
     target: { value: "Continue this" }

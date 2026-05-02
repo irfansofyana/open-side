@@ -20,6 +20,29 @@ test("parseSSELine extracts Open WebUI event-style content", () => {
   });
 });
 
+test("parseSSELine extracts reasoning delta fields used by reasoning models", () => {
+  expect(
+    parseSSELine('data: {"choices":[{"delta":{"reasoning_content":"Thinking"}}]}')
+  ).toEqual({
+    type: "reasoning",
+    content: "Thinking"
+  });
+  expect(parseSSELine('data: {"choices":[{"delta":{"reasoning":" deeply"}}]}')).toEqual({
+    type: "reasoning",
+    content: " deeply"
+  });
+  expect(parseSSELine('data: {"choices":[{"delta":{"thinking":" now"}}]}')).toEqual({
+    type: "reasoning",
+    content: " now"
+  });
+  expect(
+    parseSSELine('data: {"type":"chat:message:delta","data":{"reasoning_content":" about it"}}')
+  ).toEqual({
+    type: "reasoning",
+    content: " about it"
+  });
+});
+
 test("parseSSELine handles done, status, usage, error, and raw text", () => {
   expect(parseSSELine("data: [DONE]")).toEqual({ type: "done" });
   expect(parseSSELine('data: {"status":"Searching"}')).toEqual({

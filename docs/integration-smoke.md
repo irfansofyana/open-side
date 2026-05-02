@@ -165,6 +165,30 @@ Expected:
 - Model switching changes the next completion model but does not reset the active chat.
 - Only the explicit "New chat" action starts a separate server-side chat after a chat is active.
 
+## Manual Markdown And Streaming Smoke
+
+Run this after chat rendering changes.
+
+1. Run `npm run smoke:build`.
+2. Load or reload the unpacked extension from `dist`.
+3. Open the side panel and restore or connect to the target Open WebUI server.
+4. Select a fast, short-response model.
+5. Send a prompt asking for a heading, bullet list, task checklist, table, inline code, fenced code block, and link.
+6. Confirm the assistant response renders markdown formatting instead of raw markdown text.
+7. Confirm fenced code has syntax coloring and stays horizontally scrollable when long.
+8. Send a prompt to a reasoning model, or load a response with `<think>...</think>`, `<reasoning>...</reasoning>`, or `<details type="reasoning">...</details>`.
+9. Confirm thinking content appears in a collapsible reasoning panel while the final answer remains readable.
+10. Send a prompt that takes long enough to respond and confirm the assistant text appears incrementally when stream or persisted polling content is available.
+11. Send or load assistant text containing raw HTML such as `<strong>bold</strong>` and confirm it is not executed as HTML.
+
+Expected:
+
+- User messages remain plain text.
+- Assistant markdown renders headings, lists, task checklists, tables, links, inline code, and syntax-highlighted code blocks.
+- Open WebUI reasoning content renders from reasoning tags, reasoning details, or reasoning stream fields into a collapsible panel.
+- Unrecognized raw HTML is not mounted as DOM.
+- Streaming state looks intentional while waiting for the first assistant content, and content updates incrementally when available.
+
 ## Manual Recent Chats Smoke
 
 Run this after loading recent server-side chats into the side panel.

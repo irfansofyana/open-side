@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 
+import { MarkdownMessage } from "./MarkdownMessage";
 import { forgetServerConnection } from "../lib/chrome/storage";
 import { OpenWebUIClient } from "../lib/openwebui/client";
 import type { ChatSummary, ChatTree, OpenWebUIModel } from "../lib/openwebui/types";
@@ -77,6 +78,21 @@ const createClient = (connection: ConnectToServerResult): OpenWebUIClient =>
     getToken: () => connection.session.token
   });
 
+const promptShortcuts = [
+  {
+    label: "Summarize this page",
+    prompt: "Summarize the current page."
+  },
+  {
+    label: "Draft a reply",
+    prompt: "Draft a clear, concise reply."
+  },
+  {
+    label: "Explain this",
+    prompt: "Explain this in simple terms."
+  }
+];
+
 const defaultLoadRecentChats = (connection: ConnectToServerResult): Promise<ChatSummary[]> =>
   listRecentChats({
     client: createClient(connection)
@@ -115,6 +131,9 @@ export function App({
   const [isLoadingRecentChats, setIsLoadingRecentChats] = useState(false);
   const [isRecentChatsOpen, setIsRecentChatsOpen] = useState(false);
   const [recentChats, setRecentChats] = useState<ChatSummary[]>([]);
+
+  const selectedModelLabel =
+    connection?.models.find((model) => model.id === selectedModelId)?.name ?? selectedModelId;
 
   useEffect(() => {
     let isMounted = true;
@@ -310,8 +329,11 @@ export function App({
   return (
     <main className="panel-shell">
       <header className="top-bar">
-        <span className="brand-mark" aria-hidden="true" />
-        <span className="brand-name">Open WebUI</span>
+        <div className="brand-cluster">
+          <span className="brand-mark" aria-hidden="true" />
+          <span className="brand-name">Open WebUI</span>
+        </div>
+        {connection ? <span className="server-chip">{connection.server.displayName}</span> : null}
         {connection ? (
           <button
             className="top-bar-action"
@@ -326,64 +348,102 @@ export function App({
 
       {connection ? (
         <>
-          <section className="connection-panel chat-panel" aria-labelledby="ready-title">
-            <p className="eyebrow">Server</p>
-            <h1 id="ready-title">Ready</h1>
-            <p className="server-name">{connection.server.displayName}</p>
+          <section className="chat-shell" aria-label="Chat session">
+            <h1 className="sr-only" id="ready-title">
+              Ready
+            </h1>
             {isRecentChatsOpen ? (
-              <div className="recent-chat-list" aria-label="Recent chats">
-                {recentChats.length > 0 ? (
-                  recentChats.map((chat) => (
-                    <button
-                      className="recent-chat-item"
-                      key={chat.id}
-                      onClick={() => void handleSelectRecentChat(chat.id)}
-                      type="button"
-                    >
-                      {chat.title}
-                    </button>
-                  ))
-                ) : (
-                  <p className="server-name">No recent chats yet.</p>
-                )}
+              <div className="recent-chat-panel">
+                <p className="section-label">Recent chats</p>
+                <div className="recent-chat-list" aria-label="Recent chats">
+                  {recentChats.length > 0 ? (
+                    recentChats.map((chat) => (
+                      <button
+                        aria-current={activeChat?.id === chat.id ? "true" : undefined}
+                        className={`recent-chat-item${
+                          activeChat?.id === chat.id ? " recent-chat-item-active" : ""
+                        }`}
+                        key={chat.id}
+                        onClick={() => void handleSelectRecentChat(chat.id)}
+                        type="button"
+                      >
+                        {chat.title}
+                      </button>
+                    ))
+                  ) : (
+                    <p className="server-name">No recent chats yet.</p>
+                  )}
+                </div>
               </div>
             ) : null}
-            <label className="field-label" htmlFor="model">
-              Model
-            </label>
-            <div className="chat-controls">
-              <select
-                className="field-control"
-                id="model"
-                name="model"
-                onChange={(event) => setSelectedModelId(event.target.value)}
-                value={selectedModelId}
-              >
-                {connection.models.map((model) => (
-                  <option key={model.id} value={model.id}>
-                    {model.name ?? model.id}
-                  </option>
-                ))}
-              </select>
-              <button
-                className="secondary-action"
-                disabled={isSending}
-                onClick={handleNewChat}
-                type="button"
-              >
-                New chat
-              </button>
+            <div className="chat-toolbar" aria-label="Chat controls">
+              <label className="field-label compact-label" htmlFor="model">
+                Model
+              </label>
+              <div className="chat-controls">
+                <select
+                  className="field-control model-select"
+                  id="model"
+                  name="model"
+                  onChange={(event) => setSelectedModelId(event.target.value)}
+                  title={selectedModelLabel}
+                  value={selectedModelId}
+                >
+                  {connection.models.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.name ?? model.id}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="secondary-action new-chat-action"
+                  disabled={isSending}
+                  onClick={handleNewChat}
+                  type="button"
+                >
+                  New chat
+                </button>
+              </div>
             </div>
 
-            <div className="message-list" aria-live="polite">
-              {chatMessages.map((message) => (
-                <article className={`message message-${message.role}`} key={message.id}>
-                  <p className="message-role">{message.role === "user" ? "You" : "Assistant"}</p>
-                  <p className="message-content">
-                    {message.content || (message.role === "assistant" ? "Thinking..." : "")}
+            <div className="message-list" role="log" aria-label="Messages" aria-live="polite">
+              {chatMessages.length === 0 ? (
+                <div className="empty-state">
+                  <p className="empty-title">Start a conversation</p>
+                  <p className="empty-copy">
+                    Pick a model, send a message, or use a shortcut to get moving.
                   </p>
-                </article>
-              ))}
+                  <div className="prompt-shortcuts" aria-label="Prompt shortcuts">
+                    {promptShortcuts.map((shortcut) => (
+                      <button
+                        className="prompt-shortcut"
+                        key={shortcut.label}
+                        onClick={() => setPrompt(shortcut.prompt)}
+                        type="button"
+                      >
+                        {shortcut.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                chatMessages.map((message) => (
+                  <article className={`message message-${message.role}`} key={message.id}>
+                    <p className="message-role">
+                      {message.role === "user" ? "You" : "Assistant"}
+                    </p>
+                    {message.role === "assistant" ? (
+                      message.content ? (
+                        <MarkdownMessage content={message.content} />
+                      ) : (
+                        <p className="message-status">Assistant is responding</p>
+                      )
+                    ) : (
+                      <p className="message-content">{message.content}</p>
+                    )}
+                  </article>
+                ))
+              )}
             </div>
           </section>
 
@@ -413,10 +473,13 @@ export function App({
           </form>
         </>
       ) : isRestoring ? (
-        <section className="connection-panel" aria-labelledby="restore-session-title">
-          <p className="eyebrow">Server</p>
+        <section className="connection-panel restore-panel" aria-labelledby="restore-session-title">
+          <div className="loading-ring" aria-hidden="true" />
+          <p className="eyebrow">Open WebUI</p>
           <h1 id="restore-session-title">Restoring session</h1>
-          <p className="server-name">Checking saved Open WebUI session...</p>
+          <p className="server-name" role="status">
+            Checking saved session...
+          </p>
         </section>
       ) : (
         <section className="connection-panel" aria-labelledby="connect-server-title">

@@ -149,6 +149,7 @@ export type BuildCompletionPayloadInput = {
 
 export type StreamEvent =
   | { type: "content"; content: string }
+  | { type: "reasoning"; content: string }
   | { type: "status"; status: string; raw?: unknown }
   | { type: "usage"; usage: Record<string, unknown> }
   | { type: "error"; message: string; raw?: unknown }
