@@ -95,6 +95,8 @@ type AppLoadToolsInput = {
 
 type ChatMessage = {
   id: string;
+  modelId?: string;
+  modelName?: string;
   role: "user" | "assistant";
   content: string;
   sources?: CitationSource[];
@@ -158,6 +160,17 @@ const promptShortcuts = [
 const getModelLabel = (model: OpenWebUIModel | undefined, fallbackId: string): string =>
   model?.name ?? model?.id ?? fallbackId;
 
+const withAssistantModelFallback = (
+  messages: ChatMessage[],
+  modelId: string,
+  modelName: string
+): ChatMessage[] =>
+  messages.map((message) =>
+    message.role === "assistant" && !message.modelName
+      ? { ...message, modelId, modelName }
+      : message
+  );
+
 type ModelPickerProps = {
   disabled?: boolean;
   models: OpenWebUIModel[];
@@ -212,8 +225,9 @@ function ModelPicker({ disabled = false, models, onSelect, selectedModelId }: Mo
         title={selectedModelLabel}
         type="button"
       >
+        <span className="model-picker-orb" aria-hidden="true" />
         <span className="model-picker-copy">
-          <span className="model-picker-kicker">Model</span>
+          <span className="model-picker-kicker">Active model</span>
           <span className="model-picker-value">{selectedModelLabel}</span>
         </span>
         <ChevronDown aria-hidden="true" className="control-icon" />
@@ -374,6 +388,14 @@ export function App({
       }),
     [disabledToolItemIds, enabledToolItemIds, toolMenuItems]
   );
+  const selectedModel = useMemo(
+    () => connection?.models.find((model) => model.id === selectedModelId),
+    [connection, selectedModelId]
+  );
+  const selectedModelLabel = getModelLabel(
+    selectedModel,
+    selectedModelId || "Selected model"
+  );
 
   useEffect(() => {
     let isMounted = true;
@@ -470,6 +492,7 @@ export function App({
     const assistantId = `assistant-${Date.now()}`;
     const modelItem =
       connection.models.find((model) => model.id === selectedModelId) ?? { id: selectedModelId };
+    const modelName = getModelLabel(modelItem, selectedModelId);
     const selectedTools = toolsSelection;
 
     setPrompt("");
@@ -478,7 +501,13 @@ export function App({
     setChatMessages((messages) => [
       ...messages,
       { id: `user-${Date.now()}`, role: "user", content: nextPrompt },
-      { id: assistantId, role: "assistant", content: "" }
+      {
+        id: assistantId,
+        modelId: selectedModelId,
+        modelName,
+        role: "assistant",
+        content: ""
+      }
     ]);
 
     try {
@@ -596,7 +625,9 @@ export function App({
     try {
       const result = await loadChat(connection, chatId);
       setActiveChat(result.chat);
-      setChatMessages(result.messages);
+      setChatMessages(
+        withAssistantModelFallback(result.messages, selectedModelId, selectedModelLabel)
+      );
       setIsRecentChatsOpen(false);
       setSelectedTabs([]);
       setIsTabsOpen(false);
@@ -807,7 +838,8 @@ export function App({
                 type="button"
               >
                 <Plus aria-hidden="true" className="control-icon" />
-                New chat
+                <span>New</span>
+                <span className="sr-only"> chat</span>
               </button>
             </div>
 
@@ -834,15 +866,19 @@ export function App({
               ) : (
                 chatMessages.map((message) => (
                   <article className={`message message-${message.role}`} key={message.id}>
-                    <p className="message-role">
-                      {message.role === "user" ? "You" : "Assistant"}
-                    </p>
                     {message.role === "assistant" ? (
-                      message.content ? (
-                        <MarkdownMessage content={message.content} sources={message.sources} />
-                      ) : (
-                        <p className="message-status">Assistant is responding</p>
-                      )
+                      <>
+                        <p className="message-role">
+                          {message.modelName ?? selectedModelLabel}
+                        </p>
+                        {message.content ? (
+                          <MarkdownMessage content={message.content} sources={message.sources} />
+                        ) : (
+                          <p className="message-status">
+                            {message.modelName ?? selectedModelLabel} is responding
+                          </p>
+                        )}
+                      </>
                     ) : (
                       <p className="message-content">{message.content}</p>
                     )}

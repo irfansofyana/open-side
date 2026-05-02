@@ -28,6 +28,7 @@
 - [x] Add clear streaming state for the active assistant message.
 - [x] Stream persisted polling deltas when direct HTTP stream content is empty.
 - [ ] Distinguish polling fallback from active token streaming in the UI only if useful for debugging or user trust.
+- [x] Show the model name used for assistant responses instead of a generic assistant label.
 - [x] Improve message spacing, typography, and contrast for long conversations.
 - [ ] Add timestamps or subtle metadata only if it helps scanability.
 
@@ -44,12 +45,12 @@
 - [x] Highlight the active chat in the recent chat list.
 - [ ] Add "More" history view with fuller server-side history.
 - [ ] Load selected chat messages into the side panel with an obvious active state.
-- [ ] Make New chat visually explicit but not dominant over continuing the current chat.
+- [x] Make New chat visually explicit but not dominant over continuing the current chat.
 
 ## Model And Tools Controls
 
 - [x] Improve model selector for long model names.
-- [ ] Keep model switching clear inside the same active chat session.
+- [x] Keep model switching clear inside the same active chat session.
 - [x] Add tools menu with server-provided tools and built-in feature toggles.
 - [x] Show selected tools/features near the composer without crowding it.
 - [x] Add live smoke script for Open WebUI tools/functions discovery.

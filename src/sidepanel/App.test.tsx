@@ -243,6 +243,10 @@ test("connected user can send a prompt and see streamed assistant text", async (
   expect(sendMessage.mock.calls[0]?.[0]).not.toHaveProperty("previousMessages");
   expect(screen.getByText("Say hello")).toBeInTheDocument();
   expect(await screen.findByText("Hello from Open WebUI")).toBeInTheDocument();
+  expect(
+    within(screen.getByRole("log", { name: "Messages" })).getByText("Llama 3.1")
+  ).toBeInTheDocument();
+  expect(screen.queryByText("Assistant")).not.toBeInTheDocument();
   expect(screen.getByLabelText("Message")).toHaveValue("");
 
   fireEvent.change(screen.getByLabelText("Message"), {
@@ -296,6 +300,57 @@ test("connected user can send a prompt and see streamed assistant text", async (
     })
   );
   expect(await screen.findByText("Fresh answer")).toBeInTheDocument();
+});
+
+test("assistant message labels keep the model used for each response", async () => {
+  const connect = vi.fn().mockResolvedValue(connectionResult);
+  const sendMessage = vi.fn(async ({ modelId, onContent }) => {
+    onContent(modelId === "mistral" ? "Mistral answer" : "Llama answer");
+    return {
+      assistantText: modelId === "mistral" ? "Mistral answer" : "Llama answer",
+      chatId: "chat-1",
+      refreshedChat: {
+        id: "chat-1",
+        title: "Active chat",
+        messages: {}
+      }
+    };
+  });
+
+  render(<App connect={connect} restoreConnection={emptyRestore} sendMessage={sendMessage} />);
+
+  fireEvent.change(await screen.findByLabelText("Server URL"), {
+    target: { value: "https://openwebui.example.com" }
+  });
+  fireEvent.change(screen.getByLabelText("Email or username"), {
+    target: { value: "ada@example.com" }
+  });
+  fireEvent.change(screen.getByLabelText("Password"), {
+    target: { value: "secret" }
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+  expect(await screen.findByRole("heading", { name: "Ready" })).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("Message"), {
+    target: { value: "First" }
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+  expect(await screen.findByText("Llama answer")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByLabelText(/Model/));
+  fireEvent.click(await screen.findByRole("option", { name: /mistral/ }));
+  fireEvent.change(screen.getByLabelText("Message"), {
+    target: { value: "Second" }
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+  expect(await screen.findByText("Mistral answer")).toBeInTheDocument();
+  const messagesLog = screen.getByRole("log", { name: "Messages" });
+  expect(within(messagesLog).getByText("Llama 3.1")).toBeInTheDocument();
+  expect(within(messagesLog).getByText("mistral")).toBeInTheDocument();
+  expect(screen.queryByText("Assistant")).not.toBeInTheDocument();
 });
 
 test("assistant messages render returned citation sources", async () => {
@@ -490,7 +545,7 @@ test("empty assistant message shows an intentional streaming state", async () =>
   });
   fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
-  expect(await screen.findByText("Assistant is responding")).toBeInTheDocument();
+  expect(await screen.findByText("Llama 3.1 is responding")).toBeInTheDocument();
 
   resolveSend({
     assistantText: "Done",
