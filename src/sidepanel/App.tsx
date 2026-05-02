@@ -15,6 +15,7 @@ import {
   Plus,
   Search,
   SendHorizontal,
+  Wrench,
   X
 } from "lucide-react";
 
@@ -30,7 +31,10 @@ import type {
   CapturedTabContext,
   ChatSummary,
   ChatTree,
-  OpenWebUIModel
+  FeatureFlags,
+  OpenWebUIModel,
+  ToolMenuItem,
+  ToolsSelection
 } from "../lib/openwebui/types";
 import {
   connectToServer,
@@ -46,6 +50,12 @@ import {
   type SendPersistedMessageResult
 } from "../lib/runtime/chatRuntime";
 import { injectTabContext } from "../lib/runtime/tabPrompt";
+import {
+  buildToolsMenu,
+  resolveActiveToolItems,
+  resolveAvailableFeatures,
+  resolveToolsSelection
+} from "../lib/runtime/toolsRuntime";
 
 type AppProps = {
   captureTab?: (tab: BrowserTabSummary) => Promise<CapturedTabContext>;
@@ -56,6 +66,7 @@ type AppProps = {
   }) => Promise<ConnectToServerResult>;
   forgetSavedServer?: (serverId: string) => Promise<unknown>;
   loadChat?: (connection: ConnectToServerResult, chatId: string) => Promise<LoadChatForDisplayResult>;
+  loadTools?: (input: AppLoadToolsInput) => Promise<ToolMenuItem[]>;
   listTabs?: () => Promise<BrowserTabSummary[]>;
   loadRecentChats?: (connection: ConnectToServerResult) => Promise<ChatSummary[]>;
   restoreConnection?: () => Promise<RestoreSavedConnectionResult>;
@@ -66,11 +77,19 @@ type AppProps = {
 type AppSendMessageInput = {
   activeChat?: ChatTree;
   connection: ConnectToServerResult;
+  features: FeatureFlags;
+  filterIds: string[];
   modelId: string;
   modelItem: OpenWebUIModel;
   prompt: string;
   title?: string;
+  toolIds: string[];
   onContent: (content: string) => void;
+};
+
+type AppLoadToolsInput = {
+  connection: ConnectToServerResult;
+  modelItem: OpenWebUIModel;
 };
 
 type ChatMessage = {
@@ -85,10 +104,13 @@ const getErrorMessage = (error: unknown): string =>
 const defaultSendMessage = ({
   activeChat,
   connection,
+  features,
+  filterIds,
   modelItem,
   modelId,
   prompt,
   title,
+  toolIds,
   onContent
 }: AppSendMessageInput): Promise<SendPersistedMessageResult> => {
   const client = new OpenWebUIClient({
@@ -99,9 +121,12 @@ const defaultSendMessage = ({
   return sendPersistedMessage({
     activeChat,
     client,
+    features,
+    filterIds,
     modelItem,
     modelId,
     prompt,
+    toolIds,
     title,
     onContent
   });
@@ -263,6 +288,25 @@ const defaultLoadChat = (
     client: createClient(connection)
   });
 
+const defaultLoadTools = async ({
+  connection,
+  modelItem
+}: AppLoadToolsInput): Promise<ToolMenuItem[]> => {
+  const client = createClient(connection);
+  const [tools, functions, config] = await Promise.all([
+    client.getTools(),
+    client.getFunctions(),
+    client.getConfig()
+  ]);
+
+  return buildToolsMenu({
+    availableFeatures: resolveAvailableFeatures({ config, modelItem }),
+    functions,
+    modelItem,
+    tools
+  });
+};
+
 const defaultSaveSelectedModelPreference = (
   serverId: string,
   modelId: string
@@ -277,6 +321,7 @@ export function App({
   connect = connectToServer,
   forgetSavedServer = forgetServerConnection,
   loadChat = defaultLoadChat,
+  loadTools = defaultLoadTools,
   listTabs = listCurrentWindowTabs,
   loadRecentChats = defaultLoadRecentChats,
   restoreConnection = restoreSavedConnection,
@@ -304,6 +349,29 @@ export function App({
   const [availableTabs, setAvailableTabs] = useState<BrowserTabSummary[]>([]);
   const [selectedTabs, setSelectedTabs] = useState<CapturedTabContext[]>([]);
   const [capturingTabIds, setCapturingTabIds] = useState<Set<number>>(() => new Set());
+  const [isToolsOpen, setIsToolsOpen] = useState(false);
+  const [isLoadingTools, setIsLoadingTools] = useState(false);
+  const [toolMenuItems, setToolMenuItems] = useState<ToolMenuItem[]>([]);
+  const [enabledToolItemIds, setEnabledToolItemIds] = useState<Set<string>>(() => new Set());
+  const [disabledToolItemIds, setDisabledToolItemIds] = useState<Set<string>>(() => new Set());
+  const activeToolItems = useMemo(
+    () =>
+      resolveActiveToolItems({
+        disabledIds: [...disabledToolItemIds],
+        enabledIds: [...enabledToolItemIds],
+        items: toolMenuItems
+      }),
+    [disabledToolItemIds, enabledToolItemIds, toolMenuItems]
+  );
+  const toolsSelection = useMemo<ToolsSelection>(
+    () =>
+      resolveToolsSelection({
+        disabledIds: [...disabledToolItemIds],
+        enabledIds: [...enabledToolItemIds],
+        items: toolMenuItems
+      }),
+    [disabledToolItemIds, enabledToolItemIds, toolMenuItems]
+  );
 
   useEffect(() => {
     let isMounted = true;
@@ -373,6 +441,10 @@ export function App({
       setIsRecentChatsOpen(false);
       setSelectedTabs([]);
       setIsTabsOpen(false);
+      setIsToolsOpen(false);
+      setToolMenuItems([]);
+      setEnabledToolItemIds(new Set());
+      setDisabledToolItemIds(new Set());
       setPassword("");
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
@@ -396,6 +468,7 @@ export function App({
     const assistantId = `assistant-${Date.now()}`;
     const modelItem =
       connection.models.find((model) => model.id === selectedModelId) ?? { id: selectedModelId };
+    const selectedTools = toolsSelection;
 
     setPrompt("");
     setErrorMessage(undefined);
@@ -410,9 +483,12 @@ export function App({
       const result = await sendMessage({
         activeChat,
         connection,
+        features: selectedTools.features,
+        filterIds: selectedTools.filterIds,
         modelItem,
         modelId: selectedModelId,
         prompt: sentPrompt,
+        toolIds: selectedTools.toolIds,
         title: nextPrompt.slice(0, 80) || "New chat",
         onContent: (content) => {
           setChatMessages((messages) =>
@@ -475,6 +551,9 @@ export function App({
     setIsRecentChatsOpen(false);
     setSelectedTabs([]);
     setIsTabsOpen(false);
+    setIsToolsOpen(false);
+    setEnabledToolItemIds(new Set());
+    setDisabledToolItemIds(new Set());
     setErrorMessage(undefined);
   };
 
@@ -517,6 +596,9 @@ export function App({
       setIsRecentChatsOpen(false);
       setSelectedTabs([]);
       setIsTabsOpen(false);
+      setIsToolsOpen(false);
+      setEnabledToolItemIds(new Set());
+      setDisabledToolItemIds(new Set());
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
     } finally {
@@ -583,6 +665,64 @@ export function App({
 
   const handleRemoveSharedTab = (tabId: number) => {
     setSelectedTabs((tabs) => tabs.filter((tab) => tab.id !== tabId));
+  };
+
+  const handleToggleToolsMenu = async () => {
+    if (!connection) {
+      return;
+    }
+
+    if (isToolsOpen) {
+      setIsToolsOpen(false);
+      return;
+    }
+
+    const modelItem =
+      connection.models.find((model) => model.id === selectedModelId) ?? { id: selectedModelId };
+
+    setIsToolsOpen(true);
+    setIsLoadingTools(true);
+    setErrorMessage(undefined);
+
+    try {
+      const tools = await loadTools({ connection, modelItem });
+      setToolMenuItems(tools);
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+    } finally {
+      setIsLoadingTools(false);
+    }
+  };
+
+  const isToolItemEnabled = (item: ToolMenuItem): boolean =>
+    enabledToolItemIds.has(item.id) ||
+    (item.isEnabledByDefault && !disabledToolItemIds.has(item.id));
+
+  const handleToggleToolItem = (item: ToolMenuItem) => {
+    const isEnabled = isToolItemEnabled(item);
+
+    setEnabledToolItemIds((ids) => {
+      const nextIds = new Set(ids);
+
+      if (isEnabled || item.isEnabledByDefault) {
+        nextIds.delete(item.id);
+      } else {
+        nextIds.add(item.id);
+      }
+
+      return nextIds;
+    });
+    setDisabledToolItemIds((ids) => {
+      const nextIds = new Set(ids);
+
+      if (isEnabled && item.isEnabledByDefault) {
+        nextIds.add(item.id);
+      } else {
+        nextIds.delete(item.id);
+      }
+
+      return nextIds;
+    });
   };
 
   const handleForgetSavedServer = async () => {
@@ -713,6 +853,28 @@ export function App({
               Message
             </label>
             <div className="composer-card">
+              {activeToolItems.length > 0 ? (
+                <div className="shared-tabs" aria-live="polite">
+                  <span className="shared-tabs-summary">
+                    Using {activeToolItems.length} {activeToolItems.length === 1 ? "tool" : "tools"}
+                  </span>
+                  <div className="shared-tab-chips" aria-label="Selected tools">
+                    {activeToolItems.map((item) => (
+                      <span className="shared-tab-chip" key={item.id}>
+                        <span className="shared-tab-title">{item.name}</span>
+                        <button
+                          aria-label={`Disable ${item.name}`}
+                          className="shared-tab-remove"
+                          onClick={() => handleToggleToolItem(item)}
+                          type="button"
+                        >
+                          <X aria-hidden="true" className="control-icon" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               {selectedTabs.length > 0 ? (
                 <div className="shared-tabs" aria-live="polite">
                   <span className="shared-tabs-summary">
@@ -751,6 +913,59 @@ export function App({
                 rows={1}
                 value={prompt}
               />
+              {isToolsOpen ? (
+                <div className="tools-popover" aria-label="Tools menu">
+                  <div className="tabs-popover-header">
+                    <span className="section-label">Tools</span>
+                    <button
+                      aria-label="Close tools"
+                      className="mini-icon-action"
+                      onClick={() => setIsToolsOpen(false)}
+                      type="button"
+                    >
+                      <X aria-hidden="true" className="control-icon" />
+                    </button>
+                  </div>
+                  <div className="tab-list">
+                    {isLoadingTools ? (
+                      <p className="tab-empty">Loading tools...</p>
+                    ) : toolMenuItems.length > 0 ? (
+                      toolMenuItems.map((item) => {
+                        const isSelected = isToolItemEnabled(item);
+                        const action = isSelected ? "Disable" : "Enable";
+
+                        return (
+                          <button
+                            aria-pressed={isSelected}
+                            className={`tab-option${isSelected ? " tab-option-selected" : ""}`}
+                            key={item.id}
+                            onClick={() => handleToggleToolItem(item)}
+                            type="button"
+                          >
+                            <span
+                              aria-hidden="true"
+                              className={`tab-favicon tool-kind-mark tool-kind-${item.kind}`}
+                            >
+                              {item.kind === "builtin" ? "B" : item.kind === "filter" ? "F" : "T"}
+                            </span>
+                            <span className="tab-option-copy">
+                              <span className="tab-option-title">
+                                {action} {item.name}
+                              </span>
+                              <span className="tab-option-url">
+                                {item.description ?? (item.kind === "builtin" ? "Built-in feature" : item.kind)}
+                              </span>
+                            </span>
+                            {isSelected ? <Check aria-hidden="true" className="control-icon" /> : null}
+                          </button>
+                        );
+                      })
+                    ) : (
+                      <p className="tab-empty">No tools available for this model.</p>
+                    )}
+                  </div>
+                </div>
+              ) : null}
               {isTabsOpen ? (
                 <div className="tabs-popover" aria-label="Browser tabs">
                   <div className="tabs-popover-header">
@@ -816,6 +1031,17 @@ export function App({
               ) : null}
               <div className="composer-footer">
                 <div className="composer-tools">
+                  <button
+                    aria-expanded={isToolsOpen}
+                    aria-label="Tools"
+                    className="composer-tool-button"
+                    disabled={isSending}
+                    onClick={() => void handleToggleToolsMenu()}
+                    title="Tools"
+                    type="button"
+                  >
+                    <Wrench aria-hidden="true" className="control-icon" />
+                  </button>
                   <button
                     aria-expanded={isTabsOpen}
                     aria-label="Add tabs"

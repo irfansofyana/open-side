@@ -80,6 +80,48 @@ export interface OpenWebUIModelDetail extends OpenWebUIModel {
   info?: Record<string, unknown>;
 }
 
+export type OpenWebUITool = {
+  id: string;
+  name: string;
+  description?: string;
+  raw: Record<string, unknown>;
+};
+
+export type OpenWebUIFunction = {
+  id: string;
+  name: string;
+  type?: string;
+  isActive: boolean;
+  isGlobal: boolean;
+  description?: string;
+  raw: Record<string, unknown>;
+};
+
+export type FeatureKey = keyof FeatureFlags;
+
+export type ToolMenuItem =
+  | {
+      id: string;
+      name: string;
+      description?: string;
+      kind: "tool" | "filter";
+      isEnabledByDefault: boolean;
+    }
+  | {
+      id: FeatureKey;
+      name: string;
+      description?: string;
+      kind: "builtin";
+      featureKey: FeatureKey;
+      isEnabledByDefault: boolean;
+    };
+
+export type ToolsSelection = {
+  toolIds: string[];
+  filterIds: string[];
+  features: FeatureFlags;
+};
+
 export type BrowserTabSummary = {
   id: number;
   title: string;

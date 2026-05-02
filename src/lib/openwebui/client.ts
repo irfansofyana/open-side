@@ -5,8 +5,10 @@ import {
   type ChatSummary,
   type ChatTree,
   OpenWebUIError,
+  type OpenWebUIFunction,
   type OpenWebUIModel,
   type OpenWebUIModelDetail,
+  type OpenWebUITool,
   type OpenWebUIUser
 } from "./types";
 
@@ -56,6 +58,53 @@ const asRecordArray = (value: unknown): Record<string, unknown>[] => {
   const items = Array.isArray(value) ? value : isRecord(value) ? value.data : undefined;
 
   return Array.isArray(items) ? items.filter(isRecord) : [];
+};
+
+const getNestedString = (
+  value: Record<string, unknown>,
+  key: string
+): string | undefined => {
+  const direct = value[key];
+
+  if (typeof direct === "string" && direct.length > 0) {
+    return direct;
+  }
+
+  const meta = isRecord(value.meta) ? value.meta : undefined;
+  const nested = meta?.[key];
+
+  return typeof nested === "string" && nested.length > 0 ? nested : undefined;
+};
+
+const normalizeTool = (value: Record<string, unknown>): OpenWebUITool | undefined => {
+  if (typeof value.id !== "string" || value.id.length === 0) {
+    return undefined;
+  }
+
+  return {
+    id: value.id,
+    name: typeof value.name === "string" && value.name.length > 0 ? value.name : value.id,
+    description: getNestedString(value, "description"),
+    raw: value
+  };
+};
+
+const normalizeFunction = (
+  value: Record<string, unknown>
+): OpenWebUIFunction | undefined => {
+  if (typeof value.id !== "string" || value.id.length === 0) {
+    return undefined;
+  }
+
+  return {
+    id: value.id,
+    name: typeof value.name === "string" && value.name.length > 0 ? value.name : value.id,
+    type: typeof value.type === "string" ? value.type : undefined,
+    isActive: value.is_active !== false,
+    isGlobal: value.is_global === true,
+    description: getNestedString(value, "description"),
+    raw: value
+  };
 };
 
 const normalizeChatSummary = (
@@ -157,6 +206,12 @@ export class OpenWebUIClient {
     return isRecord(data) ? data : {};
   }
 
+  async getConfig(): Promise<Record<string, unknown>> {
+    const data = await this.request("/api/config", { auth: true });
+
+    return isRecord(data) ? data : {};
+  }
+
   async getModels(): Promise<OpenWebUIModel[]> {
     const data = await this.request("/api/models", { auth: true });
     const models = Array.isArray(data) ? data : isRecord(data) ? data.data : undefined;
@@ -171,6 +226,26 @@ export class OpenWebUIClient {
     );
 
     return isRecord(data) ? (data as OpenWebUIModelDetail) : { id: modelId };
+  }
+
+  async getTools(): Promise<OpenWebUITool[]> {
+    const data = await this.request("/api/v1/tools/list", { auth: true });
+
+    return asRecordArray(data).flatMap((tool) => {
+      const normalized = normalizeTool(tool);
+
+      return normalized ? [normalized] : [];
+    });
+  }
+
+  async getFunctions(): Promise<OpenWebUIFunction[]> {
+    const data = await this.request("/api/v1/functions/", { auth: true });
+
+    return asRecordArray(data).flatMap((fn) => {
+      const normalized = normalizeFunction(fn);
+
+      return normalized ? [normalized] : [];
+    });
   }
 
   async getChats(

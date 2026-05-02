@@ -111,6 +111,52 @@ test("MarkdownMessage renders Open WebUI thinking tags as reasoning blocks", () 
   expect(screen.getByText("Final answer.")).toBeInTheDocument();
 });
 
+test("MarkdownMessage renders Open WebUI tool call details safely", () => {
+  render(
+    <MarkdownMessage
+      content={[
+        '<details type="tool_calls" done="true" id="toolu_bdrk_01GFuqUeFvJtXh9zVow9yMLs" name="get_current_timestamp" arguments="&quot;{}&quot;" files="" embeds="&quot;&quot;">',
+        "<summary>Tool Executed</summary>",
+        '&quot;{\\&quot;current_timestamp\\&quot;: 1777736872, \\&quot;current_iso\\&quot;: \\&quot;2026-05-02T15:47:52.919622+00:00\\&quot;, \\&quot;user_local_iso\\&quot;: \\&quot;2026-05-02T22:47:52.919622+07:00\\&quot;, \\&quot;user_timezone\\&quot;: \\&quot;Asia/Jakarta\\&quot;}&quot;',
+        "</details>",
+        "It's currently **10:47 PM**."
+      ].join(" ")}
+    />
+  );
+
+  const details = screen.getByTestId("tool-call-details");
+
+  expect(details).toHaveAttribute("data-tool-name", "get_current_timestamp");
+  expect(screen.getByText("Tool Executed: get_current_timestamp")).toBeInTheDocument();
+  expect(screen.getByText("Arguments")).toBeInTheDocument();
+  expect(screen.getByText("Result")).toBeInTheDocument();
+  expect(
+    Array.from(document.querySelectorAll("code.language-json")).some((code) =>
+      code.textContent?.includes('"user_timezone": "Asia/Jakarta"')
+    )
+  ).toBe(true);
+  expect(screen.getByText(/It's currently/)).toBeInTheDocument();
+  expect(document.querySelector("script")).not.toBeInTheDocument();
+});
+
+test("MarkdownMessage prefers tool call body over metadata content attributes", () => {
+  render(
+    <MarkdownMessage
+      content={[
+        '<details type="tool_calls" done="true" content="[{&quot;type&quot;:&quot;function&quot;,&quot;function&quot;:{&quot;name&quot;:&quot;dice_roll&quot;}}]">',
+        "<summary>Tool Executed</summary>",
+        "",
+        "> dice_roll: 16",
+        "</details>"
+      ].join("\n")}
+    />
+  );
+
+  expect(screen.getByTestId("tool-call-details")).toBeInTheDocument();
+  expect(screen.getByText("dice_roll: 16")).toBeInTheDocument();
+  expect(screen.queryByText(/"type": "function"/)).not.toBeInTheDocument();
+});
+
 test("MarkdownMessage highlights fenced code blocks", () => {
   render(
     <MarkdownMessage

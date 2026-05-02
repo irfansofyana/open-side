@@ -23,6 +23,7 @@
 - [x] Add syntax-highlighted code block styling.
 - [x] Render GFM task checklists and tables.
 - [x] Render Open WebUI reasoning/thinking blocks.
+- [x] Render Open WebUI tool-call detail blocks with arguments and results.
 - [x] Add clear streaming state for the active assistant message.
 - [x] Stream persisted polling deltas when direct HTTP stream content is empty.
 - [ ] Distinguish polling fallback from active token streaming in the UI only if useful for debugging or user trust.
@@ -48,8 +49,11 @@
 
 - [x] Improve model selector for long model names.
 - [ ] Keep model switching clear inside the same active chat session.
-- [ ] Add tools menu with server-provided tools and built-in feature toggles.
-- [ ] Show selected tools/features near the composer without crowding it.
+- [x] Add tools menu with server-provided tools and built-in feature toggles.
+- [x] Show selected tools/features near the composer without crowding it.
+- [x] Add live smoke script for Open WebUI tools/functions discovery.
+- [x] Include Web Search from authenticated Open WebUI config when `features.enable_web_search` is enabled.
+- [ ] Manually verify a selected server tool executes from the extension against the target Open WebUI server.
 
 ## Browser Tab Context
 

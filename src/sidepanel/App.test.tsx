@@ -2,7 +2,12 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { App } from "./App";
-import type { BrowserTabSummary, CapturedTabContext, ChatSummary } from "../lib/openwebui/types";
+import type {
+  BrowserTabSummary,
+  CapturedTabContext,
+  ChatSummary,
+  ToolMenuItem
+} from "../lib/openwebui/types";
 import type {
   ConnectToServerResult,
   RestoreSavedConnectionResult
@@ -36,6 +41,15 @@ const connectionResult: ConnectToServerResult = {
 const emptyRestore = vi.fn<() => Promise<RestoreSavedConnectionResult>>().mockResolvedValue({
   status: "empty"
 });
+
+const jsonResponse = (body: unknown, init: ResponseInit = {}): Response =>
+  new Response(JSON.stringify(body), {
+    status: 200,
+    headers: {
+      "content-type": "application/json"
+    },
+    ...init
+  });
 
 test("default connection form renders", async () => {
   render(<App />);
@@ -560,6 +574,111 @@ test("selected browser tab context is injected into the sent prompt and cleared 
   expect(sendMessage.mock.calls[0]?.[0].prompt).toContain("User prompt:\nSummarize this");
   expect(screen.getByText("Summarize this")).toBeInTheDocument();
   expect(screen.queryByText("Sharing 1 tab")).not.toBeInTheDocument();
+});
+
+test("connected user can enable tools and feature toggles for the next chat request", async () => {
+  const restoreConnection = vi.fn<() => Promise<RestoreSavedConnectionResult>>().mockResolvedValue({
+    status: "ready",
+    connection: connectionResult,
+    selectedModelId: "llama3.1"
+  });
+  const toolMenu: ToolMenuItem[] = [
+    {
+      id: "search_tool",
+      name: "Search Tool",
+      description: "Search the web",
+      kind: "tool",
+      isEnabledByDefault: false
+    },
+    {
+      id: "web_search",
+      name: "Web search",
+      kind: "builtin",
+      featureKey: "web_search",
+      isEnabledByDefault: false
+    }
+  ];
+  const loadTools = vi.fn(async () => toolMenu);
+  const sendMessage = vi.fn(async ({ onContent }) => {
+    onContent("tool ok");
+    return {
+      assistantText: "tool ok",
+      chatId: "chat-tools",
+      refreshedChat: {
+        id: "chat-tools",
+        title: "Tool chat",
+        messages: {}
+      }
+    };
+  });
+
+  render(
+    <App
+      loadTools={loadTools}
+      restoreConnection={restoreConnection}
+      sendMessage={sendMessage}
+    />
+  );
+
+  expect(await screen.findByRole("heading", { name: "Ready" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Tools" }));
+
+  const toolsMenu = await screen.findByLabelText("Tools menu");
+  expect(within(toolsMenu).getByText("Search the web")).toBeInTheDocument();
+  fireEvent.click(within(toolsMenu).getByRole("button", { name: /Enable Search Tool/ }));
+  fireEvent.click(within(toolsMenu).getByRole("button", { name: /Enable Web search/ }));
+
+  expect(screen.getByText("Using 2 tools")).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("Message"), {
+    target: { value: "Use tools" }
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+  await waitFor(() => {
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        features: expect.objectContaining({ web_search: true }),
+        filterIds: [],
+        modelId: "llama3.1",
+        prompt: "Use tools",
+        toolIds: ["search_tool"]
+      })
+    );
+  });
+});
+
+test("default tools loader includes web search when Open WebUI config enables it", async () => {
+  const originalFetch = globalThis.fetch;
+  const fetchMock = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(jsonResponse([]))
+    .mockResolvedValueOnce(jsonResponse([]))
+    .mockResolvedValueOnce(jsonResponse({ features: { enable_web_search: true } }));
+  const restoreConnection = vi.fn<() => Promise<RestoreSavedConnectionResult>>().mockResolvedValue({
+    status: "ready",
+    connection: connectionResult,
+    selectedModelId: "llama3.1"
+  });
+
+  vi.stubGlobal("fetch", fetchMock);
+
+  try {
+    render(<App restoreConnection={restoreConnection} />);
+
+    expect(await screen.findByRole("heading", { name: "Ready" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Tools" }));
+
+    const toolsMenu = await screen.findByLabelText("Tools menu");
+    expect(within(toolsMenu).getByRole("button", { name: /Enable Web search/ })).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("https://openwebui.example.com/api/config", {
+      headers: {
+        authorization: "Bearer token-1"
+      },
+      method: "GET"
+    });
+  } finally {
+    vi.stubGlobal("fetch", originalFetch);
+  }
 });
 
 test("connected user can open recent chats, load one, and continue it", async () => {

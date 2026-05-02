@@ -10,6 +10,7 @@
     "smoke:chat:persist": "node scripts/openwebui-persistence-smoke.mjs",
     "smoke:chat:send": "node scripts/openwebui-chat-send-smoke.mjs",
     "smoke:openwebui": "node scripts/openwebui-smoke.mjs",
+    "smoke:tools": "node scripts/openwebui-tools-smoke.mjs",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
     "lint": "tsc --noEmit"

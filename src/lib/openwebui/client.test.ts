@@ -165,6 +165,120 @@ test("getModelDetail URL-encodes model id", async () => {
   );
 });
 
+test("getConfig fetches authenticated Open WebUI config for feature availability", async () => {
+  fetchMock.mockResolvedValueOnce(jsonResponse({ features: { enable_web_search: true } }));
+
+  const client = new OpenWebUIClient({
+    baseUrl: "https://openwebui.example.com",
+    getToken: () => "token-1"
+  });
+
+  await expect(client.getConfig()).resolves.toEqual({
+    features: { enable_web_search: true }
+  });
+  expect(fetchMock).toHaveBeenCalledWith("https://openwebui.example.com/api/config", {
+    headers: {
+      authorization: "Bearer token-1"
+    },
+    method: "GET"
+  });
+});
+
+test("getTools fetches accessible tools and normalizes basic display fields", async () => {
+  fetchMock.mockResolvedValueOnce(
+    jsonResponse([
+      {
+        id: "search_tool",
+        name: "Search Tool",
+        meta: { description: "Search the web" },
+        is_global: true
+      },
+      {
+        id: "bare_tool"
+      }
+    ])
+  );
+
+  const client = new OpenWebUIClient({
+    baseUrl: "https://openwebui.example.com",
+    getToken: () => "token-1"
+  });
+
+  await expect(client.getTools()).resolves.toEqual([
+    {
+      id: "search_tool",
+      name: "Search Tool",
+      description: "Search the web",
+      raw: {
+        id: "search_tool",
+        name: "Search Tool",
+        meta: { description: "Search the web" },
+        is_global: true
+      }
+    },
+    {
+      id: "bare_tool",
+      name: "bare_tool",
+      raw: {
+        id: "bare_tool"
+      }
+    }
+  ]);
+  expect(fetchMock).toHaveBeenCalledWith("https://openwebui.example.com/api/v1/tools/list", {
+    headers: {
+      authorization: "Bearer token-1"
+    },
+    method: "GET"
+  });
+});
+
+test("getFunctions fetches functions and normalizes active filter metadata", async () => {
+  fetchMock.mockResolvedValueOnce(
+    jsonResponse({
+      data: [
+        {
+          id: "style_filter",
+          name: "Style Filter",
+          type: "filter",
+          is_active: true,
+          is_global: false,
+          meta: { toggle: true, description: "Rewrite the response style" }
+        }
+      ]
+    })
+  );
+
+  const client = new OpenWebUIClient({
+    baseUrl: "https://openwebui.example.com",
+    getToken: () => "token-1"
+  });
+
+  await expect(client.getFunctions()).resolves.toEqual([
+    {
+      id: "style_filter",
+      name: "Style Filter",
+      type: "filter",
+      isActive: true,
+      isGlobal: false,
+      description: "Rewrite the response style",
+      raw: {
+        id: "style_filter",
+        name: "Style Filter",
+        type: "filter",
+        is_active: true,
+        is_global: false,
+        meta: { toggle: true, description: "Rewrite the response style" }
+      }
+    }
+  ]);
+  expect(fetchMock).toHaveBeenCalledWith("https://openwebui.example.com/api/v1/functions/", {
+    headers: {
+      authorization: "Bearer token-1"
+    },
+    method: "GET"
+  });
+});
+
 test("getChats fetches default URL and normalizes array response", async () => {
   fetchMock.mockResolvedValueOnce(
     jsonResponse([

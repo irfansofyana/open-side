@@ -674,6 +674,41 @@ h1 {
   color: #b9c2cf;
 }
 
+.tool-call-details {
+  border: 1px solid rgba(16, 163, 127, 0.22);
+  border-radius: 7px;
+  padding: 8px 10px;
+  background: rgba(16, 163, 127, 0.08);
+  color: #dbe8e4;
+}
+
+.tool-call-details summary {
+  cursor: pointer;
+  color: #aff5df;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.tool-call-content {
+  display: grid;
+  gap: 10px;
+  margin-top: 9px;
+}
+
+.tool-call-section {
+  display: grid;
+  gap: 6px;
+}
+
+.tool-call-label {
+  margin: 0;
+  color: #9aa4b2;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
 .empty-state {
   display: grid;
   gap: 8px;
@@ -830,7 +865,8 @@ h1 {
   background: rgba(255, 255, 255, 0.09);
 }
 
-.tabs-popover {
+.tabs-popover,
+.tools-popover {
   display: grid;
   gap: 8px;
   border: 1px solid rgba(255, 255, 255, 0.13);
@@ -894,6 +930,24 @@ h1 {
 
 .tab-favicon-fallback {
   background: linear-gradient(135deg, #72d6c9, #8ec5ff);
+}
+
+.tool-kind-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #06110d;
+  background: #8ee7c2;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.tool-kind-filter {
+  background: #9bbcff;
+}
+
+.tool-kind-builtin {
+  background: #d6e67a;
 }
 
 .tab-option-copy {
