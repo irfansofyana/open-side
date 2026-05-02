@@ -124,9 +124,11 @@ MVP permissions:
 
 Implementation rule:
 
-- request optional host permission only for the configured Open WebUI server origin
+- request optional host permission for the configured Open WebUI server origin
+- for browser tab context, request optional host permission only for the selected tab origin after explicit user action when `activeTab` is not enough
+- check `chrome.permissions.contains()` before requesting selected tab origin access so previously granted origins attach without another prompt
 - do not request broad page-content permissions for MVP
-- use `activeTab` and explicit user action for page text capture
+- use `activeTab`, selected-origin optional permissions, and explicit user action for page text capture
 
 ## Local Storage
 
@@ -475,11 +477,12 @@ For the active/current tab:
 - inject a small extraction function
 - capture selected text via `window.getSelection()?.toString()`
 - capture readable text using a conservative DOM text extraction
+- capture automatically when the user clicks the composer "Add tabs" control
 
 For non-active selected tabs:
 
 - title and URL are reliable with `tabs`
-- readable text may fail without host permission or activation
+- readable text may require a selected-origin optional host permission grant
 - if text extraction fails, attach title/URL and show "page text unavailable"
 
 ### Prompt Injection
@@ -579,14 +582,14 @@ Before building the full UI, validate these with a small API harness:
 10. Send a second message and confirm it updates the same chat id instead of creating a new chat.
 11. Switch model and send another message, confirming the same chat id is preserved.
 12. Use the explicit "New chat" action and confirm the next send creates a separate chat id.
-13. Fetch tools/functions.
-14. Send a message with one selected tool and explicit `features`.
-15. Confirm whether selected-tool status/output arrives through direct streaming, polling, or requires Socket.IO.
-16. Verify open-tab listing in Chrome.
-17. Verify active-tab readable text extraction.
-18. Verify graceful fallback for a non-readable tab.
+13. Verify open-tab listing in Chrome.
+14. Verify active-tab readable text extraction.
+15. Verify graceful fallback for a non-readable tab.
+16. Fetch tools/functions.
+17. Send a message with one selected tool and explicit `features`.
+18. Confirm whether selected-tool status/output arrives through direct streaming, polling, or requires Socket.IO.
 
-Do not polish chat UI until gates 1-15 pass against the target Open WebUI server. Do not polish tab-context UI until gates 16-18 pass in Chrome.
+Do not polish chat UI until the active chat, persistence, and selected next slice are verified against the target Open WebUI server. Do not polish tab-context UI until tab-context gates 13-15 pass in Chrome.
 
 ## Implementation Order
 
@@ -600,13 +603,13 @@ Do not polish chat UI until gates 1-15 pass against the target Open WebUI server
 8. Chat data model with message ids and simple parent-child tracking.
 9. Explicit new chat, active-chat continuation, and direct streaming message.
 10. `/api/chat/completed` finalization and server refetch.
-11. Tools/functions discovery.
-12. Tool/default feature selection logic.
-13. Completion payload builder for Open WebUI compatibility.
-14. Pipe/function model request handling.
-15. Polling recovery for interrupted streams or long-running tools.
-16. Add-tabs picker.
-17. Active-tab text extraction and selected-tab prompt injection.
+11. Add-tabs picker.
+12. Active-tab text extraction and selected-tab prompt injection.
+13. Tools/functions discovery.
+14. Tool/default feature selection logic.
+15. Completion payload builder for Open WebUI compatibility.
+16. Pipe/function model request handling.
+17. Polling recovery for interrupted streams or long-running tools.
 18. Gemini-like UI polish.
 19. Manual end-to-end test pass.
 
@@ -652,6 +655,6 @@ Manual Chrome tests:
 
 - `chrome.storage.local` is not a true secret vault. It is acceptable for MVP token storage, but we must avoid content-script exposure and logging.
 - Full Open WebUI parity may require Socket.IO. Start with fetch streaming plus polling recovery, then add Socket.IO if target-server behavior proves it necessary.
-- Non-active tab text extraction cannot be guaranteed without broader host permissions. MVP should list tabs reliably and capture full text where allowed.
+- Non-active tab text extraction cannot be guaranteed without selected-origin host permission or broader host permissions. MVP should list tabs reliably and request selected-origin access only when the user explicitly shares a tab.
 - Rich tool artifacts are intentionally out of MVP unless returned as safe markdown/text.
 - Branching chat history is modeled early but can be visually simplified in MVP.

@@ -123,7 +123,7 @@ MVP rendering for tool output includes plain text, markdown, code blocks, links,
 
 The extension supports explicit selected-tab sharing per chat.
 
-The composer should include an "Add tabs" control near the tools/composer controls. Opening it shows a Gemini-like picker of currently open browser tabs, including favicon, title, URL/origin where useful, and an indicator for the current tab. The user can select one or more tabs to attach as context.
+The composer should include an "Add tabs" control near the tools/composer controls. Clicking it should immediately attach the current active tab as explicit context, then show a Gemini-like picker of currently open browser tabs, including favicon, title, URL/origin where useful, and an indicator for the current tab. The user can manually select or remove additional tabs from that picker.
 
 When a tab is selected, the extension captures what is available:
 
@@ -138,7 +138,7 @@ For MVP, selected-tab context is injected into the outgoing prompt as visible co
 
 Long-term, long tab context can be upgraded to a file or RAG attachment flow. That is not required for MVP.
 
-The user must be able to see when tab context is being shared. The composer should show a "Sharing N tabs" state with selected tab chips or icons. The extension should not automatically attach page content without explicit user action.
+The user must be able to see when tab context is being shared. The composer should show a "Sharing N tabs" state with selected tab chips or icons. The extension should not attach page content before the user explicitly clicks "Add tabs" or manually selects another tab.
 
 Some pages cannot be read by extensions, such as Chrome internal pages, extension pages, some PDFs, and restricted browser surfaces. The extension should show a clear unavailable state for those pages.
 
@@ -238,12 +238,13 @@ Success criteria:
 
 1. User opens side panel.
 2. User clicks the "Add tabs" control near the composer/tools area.
-3. Extension shows a Gemini-like list of currently open browser tabs.
-4. User selects one or more tabs.
-5. Extension captures available context for selected tabs.
-6. Composer indicates "Sharing N tabs" and shows selected tab chips or icons.
-7. User sends a prompt.
-8. Selected tab context is included in the prompt sent to Open WebUI.
+3. Extension immediately attaches the current active tab.
+4. Extension shows a Gemini-like list of currently open browser tabs.
+5. User optionally selects or removes additional tabs.
+6. Extension captures available context for selected tabs.
+7. Composer indicates "Sharing N tabs" and shows selected tab chips or icons.
+8. User sends a prompt.
+9. Selected tab context is included in the prompt sent to Open WebUI.
 
 Success criteria:
 
@@ -323,7 +324,9 @@ Expected Chrome permissions:
 - `scripting`
 - `tabs`
 
-Host permissions should be minimized. The MVP needs `tabs` to list open browser tabs, and `activeTab` plus `scripting` for explicit readable context capture where Chrome allows it. The extension should not request broad persistent access to all page contents for MVP.
+Host permissions should be minimized. The MVP needs `tabs` to list open browser tabs, and `activeTab` plus `scripting` for explicit readable context capture where Chrome allows it. When `activeTab` is not enough for a selected normal web page, the extension may request optional host permission for that selected page origin at the moment the user explicitly shares the tab. The extension should not request broad persistent access to all page contents for MVP.
+
+Granted selected-page origins should be reused via `chrome.permissions.contains()` so the user is not prompted again for the same origin. A future convenience setting may request broader all-sites access once at onboarding, but only with an explicit user action because Chrome still requires user approval for page-reading permissions.
 
 The extension also needs network access to the configured Open WebUI server. The MVP should request optional host permission for the specific server origin after the user enters the server URL. It should not request broad persistent `<all_urls>` access for server communication.
 
@@ -350,7 +353,7 @@ Errors should be visible in the UI and actionable. For example, expired token sh
 - Treat JWT/session token as sensitive.
 - Do not send browser tab context unless the user explicitly selects tabs to share.
 - Make selected-tab sharing state visible in the composer.
-- Avoid broad host permissions for page contents if `activeTab` and explicit user selection are sufficient.
+- Avoid broad host permissions for page contents; request selected page origins only after explicit user selection when Chrome requires it.
 - Do not run server-defined tools locally.
 - Do not log tokens, passwords, or captured page text.
 
@@ -408,7 +411,7 @@ Build the product in this order:
 5. Minimal server-side new chat and streaming completion.
 6. Gemini-like top menu with recent server-side chats.
 7. Fuller server-side chat history and continue flow.
-8. Tools discovery and per-chat tool selection.
-9. Open-tabs picker, selected-tab context capture, and prompt injection.
+8. Open-tabs picker, selected-tab context capture, and prompt injection.
+9. Tools discovery and per-chat tool selection.
 10. UI polish toward Gemini-style panel with Open WebUI controls.
 11. Error handling, compatibility checks, and manual end-to-end testing.

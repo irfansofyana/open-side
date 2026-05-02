@@ -761,12 +761,206 @@ h1 {
   color: #8f98a6;
 }
 
+.shared-tabs {
+  display: grid;
+  gap: 6px;
+}
+
+.shared-tabs-summary {
+  color: #a9f4d0;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.shared-tab-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.shared-tab-chip {
+  display: inline-flex;
+  max-width: 100%;
+  min-height: 28px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(16, 163, 127, 0.28);
+  border-radius: 999px;
+  padding: 4px 5px 4px 9px;
+  color: #e9fff7;
+  background: rgba(16, 163, 127, 0.13);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.shared-tab-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shared-tab-muted {
+  color: #a5adba;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.shared-tab-remove,
+.mini-icon-action,
+.composer-tool-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  color: #dce2eb;
+  background: transparent;
+}
+
+.shared-tab-remove {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  padding: 0;
+}
+
+.shared-tab-remove:hover,
+.mini-icon-action:hover,
+.composer-tool-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.tabs-popover {
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 12px;
+  padding: 8px;
+  background: rgba(11, 14, 18, 0.94);
+}
+
+.tabs-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mini-icon-action {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+}
+
+.tab-list {
+  display: grid;
+  gap: 5px;
+  max-height: 210px;
+  overflow-y: auto;
+}
+
+.tab-option {
+  display: flex;
+  width: 100%;
+  min-height: 46px;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 9px;
+  padding: 7px 8px;
+  color: #e8ecf4;
+  background: rgba(255, 255, 255, 0.045);
+  text-align: left;
+}
+
+.tab-option:hover:not(:disabled),
+.tab-option:focus-visible {
+  border-color: rgba(16, 163, 127, 0.36);
+  background: rgba(255, 255, 255, 0.075);
+  outline: 0;
+}
+
+.tab-option-selected {
+  border-color: rgba(16, 163, 127, 0.42);
+  background: rgba(16, 163, 127, 0.13);
+}
+
+.tab-favicon {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  flex: 0 0 auto;
+}
+
+.tab-favicon-fallback {
+  background: linear-gradient(135deg, #72d6c9, #8ec5ff);
+}
+
+.tab-option-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 2px;
+}
+
+.tab-option-title,
+.tab-option-url {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-option-title {
+  color: #f4f6fb;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.tab-option-url,
+.tab-option-status,
+.tab-empty {
+  color: #9aa4b2;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.tab-empty {
+  margin: 0;
+  padding: 8px;
+}
+
 .composer-footer {
   display: flex;
   min-height: 32px;
   align-items: end;
   justify-content: space-between;
   gap: 8px;
+}
+
+.composer-tools {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.composer-tool-button {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  color: #cbd5e1;
+}
+
+.composer-tool-button[aria-expanded="true"] {
+  color: #a9f4d0;
+  background: rgba(16, 163, 127, 0.16);
+}
+
+.composer-tool-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .composer-hint {

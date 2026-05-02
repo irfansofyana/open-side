@@ -1,8 +1,8 @@
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { App } from "./App";
-import type { ChatSummary } from "../lib/openwebui/types";
+import type { BrowserTabSummary, CapturedTabContext, ChatSummary } from "../lib/openwebui/types";
 import type {
   ConnectToServerResult,
   RestoreSavedConnectionResult
@@ -431,6 +431,135 @@ test("empty assistant message shows an intentional streaming state", async () =>
   });
 
   expect(await screen.findByText("Done")).toBeInTheDocument();
+});
+
+test("connected user automatically attaches the current tab and manually selects other tabs", async () => {
+  const currentTab: BrowserTabSummary = {
+    favIconUrl: "https://example.com/favicon.ico",
+    id: 101,
+    isActive: true,
+    origin: "https://example.com",
+    title: "Example Docs",
+    url: "https://example.com/docs"
+  };
+  const otherTab: BrowserTabSummary = {
+    id: 102,
+    isActive: false,
+    origin: "https://other.example",
+    title: "Other Docs",
+    url: "https://other.example/docs"
+  };
+  const capturedCurrentTab: CapturedTabContext = {
+    ...currentTab,
+    readableText: "Page body",
+    readableTextUnavailable: false,
+    selectedText: "Selected paragraph",
+    truncated: false
+  };
+  const capturedOtherTab: CapturedTabContext = {
+    ...otherTab,
+    readableText: "Other page body",
+    readableTextUnavailable: false,
+    selectedText: "",
+    truncated: false
+  };
+  const restoreConnection = vi.fn<() => Promise<RestoreSavedConnectionResult>>().mockResolvedValue({
+    status: "ready",
+    connection: connectionResult,
+    selectedModelId: "llama3.1"
+  });
+  const listTabs = vi.fn(async () => [currentTab, otherTab]);
+  const captureTab = vi.fn(async (tab: BrowserTabSummary) =>
+    tab.id === currentTab.id ? capturedCurrentTab : capturedOtherTab
+  );
+
+  render(<App captureTab={captureTab} listTabs={listTabs} restoreConnection={restoreConnection} />);
+
+  expect(await screen.findByRole("heading", { name: "Ready" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Add tabs" }));
+
+  const tabsPicker = await screen.findByLabelText("Browser tabs");
+  expect(within(tabsPicker).getByRole("button", { name: /Remove Example Docs/ })).toBeInTheDocument();
+  expect(within(tabsPicker).getByRole("button", { name: /Share Other Docs/ })).toBeInTheDocument();
+  expect(listTabs).toHaveBeenCalled();
+  expect(captureTab).toHaveBeenCalledWith(currentTab);
+  expect(captureTab).not.toHaveBeenCalledWith(otherTab);
+  expect(screen.getByText("Sharing 1 tab")).toBeInTheDocument();
+  expect(screen.getByText("Example Docs")).toBeInTheDocument();
+
+  fireEvent.click(within(tabsPicker).getByRole("button", { name: /Share Other Docs/ }));
+
+  await waitFor(() => {
+    expect(captureTab).toHaveBeenCalledWith(otherTab);
+  });
+  expect(screen.getByText("Sharing 2 tabs")).toBeInTheDocument();
+  expect(screen.getByText("Other Docs")).toBeInTheDocument();
+});
+
+test("selected browser tab context is injected into the sent prompt and cleared after send", async () => {
+  const tab: BrowserTabSummary = {
+    id: 101,
+    isActive: true,
+    origin: "https://example.com",
+    title: "Example Docs",
+    url: "https://example.com/docs"
+  };
+  const capturedTab: CapturedTabContext = {
+    ...tab,
+    readableText: "Page body",
+    readableTextUnavailable: false,
+    selectedText: "Selected paragraph",
+    truncated: false
+  };
+  const restoreConnection = vi.fn<() => Promise<RestoreSavedConnectionResult>>().mockResolvedValue({
+    status: "ready",
+    connection: connectionResult,
+    selectedModelId: "llama3.1"
+  });
+  const sendMessage = vi.fn(async ({ onContent }) => {
+    onContent("ok");
+    return {
+      assistantText: "ok",
+      chatId: "chat-1",
+      refreshedChat: {
+        id: "chat-1",
+        title: "Active chat",
+        messages: {}
+      }
+    };
+  });
+
+  render(
+    <App
+      captureTab={vi.fn(async () => capturedTab)}
+      listTabs={vi.fn(async () => [tab])}
+      restoreConnection={restoreConnection}
+      sendMessage={sendMessage}
+    />
+  );
+
+  expect(await screen.findByRole("heading", { name: "Ready" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Add tabs" }));
+  expect(await screen.findByText("Sharing 1 tab")).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("Message"), {
+    target: { value: "Summarize this" }
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+  await waitFor(() => {
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: expect.stringContaining("Context from selected browser tabs:"),
+        title: "Summarize this"
+      })
+    );
+  });
+  expect(sendMessage.mock.calls[0]?.[0].prompt).toContain("Title: Example Docs");
+  expect(sendMessage.mock.calls[0]?.[0].prompt).toContain("Selected paragraph");
+  expect(sendMessage.mock.calls[0]?.[0].prompt).toContain("User prompt:\nSummarize this");
+  expect(screen.getByText("Summarize this")).toBeInTheDocument();
+  expect(screen.queryByText("Sharing 1 tab")).not.toBeInTheDocument();
 });
 
 test("connected user can open recent chats, load one, and continue it", async () => {

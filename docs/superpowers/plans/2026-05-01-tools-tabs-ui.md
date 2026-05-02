@@ -1,14 +1,25 @@
-# Tools Tabs And Side Panel UI Implementation Plan
+# Browser Tabs, Tools, And Side Panel UI Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add Open WebUI server-side tool discovery and selection, browser tab context capture and prompt injection, Gemini-like chat UI controls, markdown rendering, logout, and manual Chrome acceptance testing.
+**Goal:** Add browser tab context capture and prompt injection first, then Open WebUI server-side tool discovery and selection, Gemini-like chat UI controls, markdown rendering, logout, and manual Chrome acceptance testing.
 
 **Architecture:** Tool availability is server-owned and normalized in `toolsRuntime.ts`. Browser context is client-side prompt augmentation in `TabContextService`. The React side panel composes runtime state into menus, composer controls, selected-tab sharing chips, and chat rendering without executing server-defined tools locally.
 
 **Tech Stack:** React, TypeScript, Chrome `tabs` and `scripting` APIs, Vitest, Testing Library, lucide-react, safe markdown rendering.
 
 ---
+
+## Current Priority Order
+
+As of the latest backlog decision, implement browser tab context before server tools:
+
+1. Shared tool/tab context types.
+2. Browser tab listing, readable text capture, truncation handling, and prompt injection.
+3. Side-panel "Add tabs" picker and selected-tab sharing indicators.
+4. Manual Chrome verification for active, non-active, and restricted tabs.
+5. Open WebUI tools/functions discovery and tools menu.
+6. Tool payload integration and tool-output/status rendering.
 
 ## Source Documents
 
@@ -320,7 +331,7 @@ git commit -m "feat: discover and resolve server tools"
 - Create: `src/lib/runtime/tabPrompt.ts`
 - Create: `src/lib/runtime/tabPrompt.test.ts`
 
-- [ ] **Step 1: Create extraction function**
+- [x] **Step 1: Create extraction function**
 
 Create `src/content/extractPageContext.ts`:
 
@@ -358,7 +369,7 @@ export function extractPageContext(maxCharacters = 20_000): ExtractedPageContext
 }
 ```
 
-- [ ] **Step 2: Write tab service tests**
+- [x] **Step 2: Write tab service tests**
 
 Create `src/lib/chrome/tabs.test.ts`:
 
@@ -404,7 +415,7 @@ describe("tabs", () => {
 });
 ```
 
-- [ ] **Step 3: Implement tab service**
+- [x] **Step 3: Implement tab service**
 
 Create `src/lib/chrome/tabs.ts`:
 
@@ -479,7 +490,7 @@ export async function captureTabContext(tab: BrowserTabSummary): Promise<Capture
 }
 ```
 
-- [ ] **Step 4: Write prompt injection tests**
+- [x] **Step 4: Write prompt injection tests**
 
 Create `src/lib/runtime/tabPrompt.test.ts`:
 
@@ -536,7 +547,7 @@ describe("tabPrompt", () => {
 });
 ```
 
-- [ ] **Step 5: Implement prompt injection**
+- [x] **Step 5: Implement prompt injection**
 
 Create `src/lib/runtime/tabPrompt.ts`:
 
@@ -570,7 +581,7 @@ export function injectTabContext(input: {
 }
 ```
 
-- [ ] **Step 6: Run tab tests**
+- [x] **Step 6: Run tab tests**
 
 Run: `npm test -- src/lib/chrome/tabs.test.ts src/lib/runtime/tabPrompt.test.ts`
 

@@ -53,10 +53,13 @@
 
 ## Browser Tab Context
 
-- [ ] Add "Add tabs" control near composer/tools.
-- [ ] Show selected-tab chips or compact indicators.
-- [ ] Clearly mark restricted tabs or unavailable readable text.
-- [ ] Show visible context-sharing state before send.
+- [x] Treat browser tab context as the next feature slice before server tools.
+- [x] Add "Add tabs" control near composer/tools.
+- [x] Auto-attach the current active tab when the user clicks "Add tabs".
+- [x] Show selected-tab chips or compact indicators.
+- [x] Clearly mark restricted tabs or unavailable readable text.
+- [x] Show visible context-sharing state before send.
+- [ ] Consider an explicit "Allow all sites" onboarding/settings option for users who prefer one broad Chrome permission prompt over per-origin prompts.
 
 ## Accessibility And Responsiveness
 

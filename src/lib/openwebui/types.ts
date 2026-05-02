@@ -80,6 +80,22 @@ export interface OpenWebUIModelDetail extends OpenWebUIModel {
   info?: Record<string, unknown>;
 }
 
+export type BrowserTabSummary = {
+  id: number;
+  title: string;
+  url: string;
+  origin: string;
+  favIconUrl?: string;
+  isActive: boolean;
+};
+
+export type CapturedTabContext = BrowserTabSummary & {
+  selectedText: string;
+  readableText: string;
+  readableTextUnavailable: boolean;
+  truncated: boolean;
+};
+
 export interface ChatSummary {
   id: string;
   title: string;

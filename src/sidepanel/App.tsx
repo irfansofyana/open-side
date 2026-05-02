@@ -7,15 +7,31 @@ import {
   type FormEvent,
   type KeyboardEvent
 } from "react";
-import { Check, ChevronDown, History, Plus, Search, SendHorizontal } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  History,
+  PanelTop,
+  Plus,
+  Search,
+  SendHorizontal,
+  X
+} from "lucide-react";
 
 import { MarkdownMessage } from "./MarkdownMessage";
+import { captureTabContext, listCurrentWindowTabs } from "../lib/chrome/tabs";
 import {
   forgetServerConnection,
   saveSelectedModelPreference as saveSelectedModelPreferenceToStorage
 } from "../lib/chrome/storage";
 import { OpenWebUIClient } from "../lib/openwebui/client";
-import type { ChatSummary, ChatTree, OpenWebUIModel } from "../lib/openwebui/types";
+import type {
+  BrowserTabSummary,
+  CapturedTabContext,
+  ChatSummary,
+  ChatTree,
+  OpenWebUIModel
+} from "../lib/openwebui/types";
 import {
   connectToServer,
   restoreSavedConnection,
@@ -29,8 +45,10 @@ import {
   sendPersistedMessage,
   type SendPersistedMessageResult
 } from "../lib/runtime/chatRuntime";
+import { injectTabContext } from "../lib/runtime/tabPrompt";
 
 type AppProps = {
+  captureTab?: (tab: BrowserTabSummary) => Promise<CapturedTabContext>;
   connect?: (input: {
     serverUrl: string;
     email: string;
@@ -38,6 +56,7 @@ type AppProps = {
   }) => Promise<ConnectToServerResult>;
   forgetSavedServer?: (serverId: string) => Promise<unknown>;
   loadChat?: (connection: ConnectToServerResult, chatId: string) => Promise<LoadChatForDisplayResult>;
+  listTabs?: () => Promise<BrowserTabSummary[]>;
   loadRecentChats?: (connection: ConnectToServerResult) => Promise<ChatSummary[]>;
   restoreConnection?: () => Promise<RestoreSavedConnectionResult>;
   saveSelectedModelPreference?: (serverId: string, modelId: string) => Promise<unknown>;
@@ -50,6 +69,7 @@ type AppSendMessageInput = {
   modelId: string;
   modelItem: OpenWebUIModel;
   prompt: string;
+  title?: string;
   onContent: (content: string) => void;
 };
 
@@ -68,6 +88,7 @@ const defaultSendMessage = ({
   modelItem,
   modelId,
   prompt,
+  title,
   onContent
 }: AppSendMessageInput): Promise<SendPersistedMessageResult> => {
   const client = new OpenWebUIClient({
@@ -81,6 +102,7 @@ const defaultSendMessage = ({
     modelItem,
     modelId,
     prompt,
+    title,
     onContent
   });
 };
@@ -251,9 +273,11 @@ const defaultSaveSelectedModelPreference = (
   });
 
 export function App({
+  captureTab = captureTabContext,
   connect = connectToServer,
   forgetSavedServer = forgetServerConnection,
   loadChat = defaultLoadChat,
+  listTabs = listCurrentWindowTabs,
   loadRecentChats = defaultLoadRecentChats,
   restoreConnection = restoreSavedConnection,
   saveSelectedModelPreference = defaultSaveSelectedModelPreference,
@@ -275,6 +299,11 @@ export function App({
   const [isLoadingRecentChats, setIsLoadingRecentChats] = useState(false);
   const [isRecentChatsOpen, setIsRecentChatsOpen] = useState(false);
   const [recentChats, setRecentChats] = useState<ChatSummary[]>([]);
+  const [isTabsOpen, setIsTabsOpen] = useState(false);
+  const [isLoadingTabs, setIsLoadingTabs] = useState(false);
+  const [availableTabs, setAvailableTabs] = useState<BrowserTabSummary[]>([]);
+  const [selectedTabs, setSelectedTabs] = useState<CapturedTabContext[]>([]);
+  const [capturingTabIds, setCapturingTabIds] = useState<Set<number>>(() => new Set());
 
   useEffect(() => {
     let isMounted = true;
@@ -342,6 +371,8 @@ export function App({
       setChatMessages([]);
       setRecentChats([]);
       setIsRecentChatsOpen(false);
+      setSelectedTabs([]);
+      setIsTabsOpen(false);
       setPassword("");
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
@@ -358,6 +389,10 @@ export function App({
     }
 
     const nextPrompt = prompt;
+    const sentPrompt = injectTabContext({
+      prompt: nextPrompt,
+      tabs: selectedTabs
+    });
     const assistantId = `assistant-${Date.now()}`;
     const modelItem =
       connection.models.find((model) => model.id === selectedModelId) ?? { id: selectedModelId };
@@ -377,7 +412,8 @@ export function App({
         connection,
         modelItem,
         modelId: selectedModelId,
-        prompt: nextPrompt,
+        prompt: sentPrompt,
+        title: nextPrompt.slice(0, 80) || "New chat",
         onContent: (content) => {
           setChatMessages((messages) =>
             messages.map((message) =>
@@ -395,6 +431,8 @@ export function App({
         )
       );
       setActiveChat(result.refreshedChat);
+      setSelectedTabs([]);
+      setIsTabsOpen(false);
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
       setChatMessages((messages) => messages.filter((message) => message.id !== assistantId));
@@ -435,6 +473,8 @@ export function App({
     setActiveChat(undefined);
     setChatMessages([]);
     setIsRecentChatsOpen(false);
+    setSelectedTabs([]);
+    setIsTabsOpen(false);
     setErrorMessage(undefined);
   };
 
@@ -475,11 +515,74 @@ export function App({
       setActiveChat(result.chat);
       setChatMessages(result.messages);
       setIsRecentChatsOpen(false);
+      setSelectedTabs([]);
+      setIsTabsOpen(false);
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
     } finally {
       setIsLoadingRecentChats(false);
     }
+  };
+
+  const captureAndSelectTab = async (tab: BrowserTabSummary) => {
+    setCapturingTabIds((ids) => new Set(ids).add(tab.id));
+    setErrorMessage(undefined);
+
+    try {
+      const capturedTab = await captureTab(tab);
+      setSelectedTabs((tabs) => [
+        ...tabs.filter((selectedTab) => selectedTab.id !== capturedTab.id),
+        capturedTab
+      ]);
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+    } finally {
+      setCapturingTabIds((ids) => {
+        const nextIds = new Set(ids);
+        nextIds.delete(tab.id);
+        return nextIds;
+      });
+    }
+  };
+
+  const handleToggleTabsPicker = async () => {
+    if (isTabsOpen) {
+      setIsTabsOpen(false);
+      return;
+    }
+
+    setIsTabsOpen(true);
+    setIsLoadingTabs(true);
+    setErrorMessage(undefined);
+
+    try {
+      const tabs = await listTabs();
+      const activeTab = tabs.find((tab) => tab.isActive);
+      setAvailableTabs(tabs);
+
+      if (activeTab && !selectedTabs.some((selectedTab) => selectedTab.id === activeTab.id)) {
+        await captureAndSelectTab(activeTab);
+      }
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+    } finally {
+      setIsLoadingTabs(false);
+    }
+  };
+
+  const handleShareTab = async (tab: BrowserTabSummary) => {
+    const isAlreadySelected = selectedTabs.some((selectedTab) => selectedTab.id === tab.id);
+
+    if (isAlreadySelected) {
+      setSelectedTabs((tabs) => tabs.filter((selectedTab) => selectedTab.id !== tab.id));
+      return;
+    }
+
+    await captureAndSelectTab(tab);
+  };
+
+  const handleRemoveSharedTab = (tabId: number) => {
+    setSelectedTabs((tabs) => tabs.filter((tab) => tab.id !== tabId));
   };
 
   const handleForgetSavedServer = async () => {
@@ -610,6 +713,34 @@ export function App({
               Message
             </label>
             <div className="composer-card">
+              {selectedTabs.length > 0 ? (
+                <div className="shared-tabs" aria-live="polite">
+                  <span className="shared-tabs-summary">
+                    Sharing {selectedTabs.length} {selectedTabs.length === 1 ? "tab" : "tabs"}
+                  </span>
+                  <div className="shared-tab-chips" aria-label="Selected tabs">
+                    {selectedTabs.map((tab) => (
+                      <span className="shared-tab-chip" key={tab.id}>
+                        <span className="shared-tab-title">{tab.title}</span>
+                        {tab.readableTextUnavailable ? (
+                          <span className="shared-tab-muted">text unavailable</span>
+                        ) : null}
+                        {tab.truncated ? (
+                          <span className="shared-tab-muted">truncated</span>
+                        ) : null}
+                        <button
+                          aria-label={`Remove ${tab.title}`}
+                          className="shared-tab-remove"
+                          onClick={() => handleRemoveSharedTab(tab.id)}
+                          type="button"
+                        >
+                          <X aria-hidden="true" className="control-icon" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               <textarea
                 className="message-input"
                 id="message"
@@ -620,8 +751,84 @@ export function App({
                 rows={1}
                 value={prompt}
               />
+              {isTabsOpen ? (
+                <div className="tabs-popover" aria-label="Browser tabs">
+                  <div className="tabs-popover-header">
+                    <span className="section-label">Open tabs</span>
+                    <button
+                      aria-label="Close tabs"
+                      className="mini-icon-action"
+                      onClick={() => setIsTabsOpen(false)}
+                      type="button"
+                    >
+                      <X aria-hidden="true" className="control-icon" />
+                    </button>
+                  </div>
+                  <div className="tab-list">
+                    {isLoadingTabs ? (
+                      <p className="tab-empty">Loading tabs...</p>
+                    ) : availableTabs.length > 0 ? (
+                      availableTabs.map((tab) => {
+                        const isSelected = selectedTabs.some(
+                          (selectedTab) => selectedTab.id === tab.id
+                        );
+                        const isCapturing = capturingTabIds.has(tab.id);
+
+                        return (
+                          <button
+                            aria-pressed={isSelected}
+                            className={`tab-option${isSelected ? " tab-option-selected" : ""}`}
+                            disabled={isCapturing}
+                            key={tab.id}
+                            onClick={() => void handleShareTab(tab)}
+                            type="button"
+                          >
+                            {tab.favIconUrl ? (
+                              <img alt="" className="tab-favicon" src={tab.favIconUrl} />
+                            ) : (
+                              <span
+                                aria-hidden="true"
+                                className="tab-favicon tab-favicon-fallback"
+                              />
+                            )}
+                            <span className="tab-option-copy">
+                              <span className="tab-option-title">
+                                {isSelected ? "Remove" : "Share"} {tab.title}
+                              </span>
+                              <span className="tab-option-url">
+                                {tab.isActive ? "Current tab · " : ""}
+                                {tab.origin}
+                              </span>
+                            </span>
+                            {isCapturing ? (
+                              <span className="tab-option-status">Reading...</span>
+                            ) : isSelected ? (
+                              <Check aria-hidden="true" className="control-icon" />
+                            ) : null}
+                          </button>
+                        );
+                      })
+                    ) : (
+                      <p className="tab-empty">No browser tabs available.</p>
+                    )}
+                  </div>
+                </div>
+              ) : null}
               <div className="composer-footer">
-                <span className="composer-hint">Enter to send • Shift+Enter for newline</span>
+                <div className="composer-tools">
+                  <button
+                    aria-expanded={isTabsOpen}
+                    aria-label="Add tabs"
+                    className="composer-tool-button"
+                    disabled={isSending}
+                    onClick={() => void handleToggleTabsPicker()}
+                    title="Add tabs"
+                    type="button"
+                  >
+                    <PanelTop aria-hidden="true" className="control-icon" />
+                  </button>
+                  <span className="composer-hint">Enter to send • Shift+Enter for newline</span>
+                </div>
                 <button
                   aria-label={isSending ? "Sending" : "Send"}
                   className="send-action"
