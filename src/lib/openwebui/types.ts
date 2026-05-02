@@ -122,6 +122,14 @@ export type ToolsSelection = {
   features: FeatureFlags;
 };
 
+export type CitationSource = {
+  documents: string[];
+  index: number;
+  metadata: Record<string, unknown>[];
+  name: string;
+  url?: string;
+};
+
 export type BrowserTabSummary = {
   id: number;
   title: string;
@@ -207,6 +215,7 @@ export type BuildCompletionPayloadInput = {
 
 export type StreamEvent =
   | { type: "content"; content: string }
+  | { type: "citation"; citation: CitationSource }
   | { type: "reasoning"; content: string }
   | { type: "status"; status: string; raw?: unknown }
   | { type: "usage"; usage: Record<string, unknown> }

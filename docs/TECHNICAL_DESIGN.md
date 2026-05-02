@@ -359,12 +359,14 @@ The stream adapter should parse:
 - OpenAI-style `choices[].delta.content`
 - usage chunks when present
 - JSON events with status/source/error data if returned by Open WebUI
+- Open WebUI `citation`/`source` events carrying document snippets, URLs, and metadata
 
 The UI should support:
 
 - incremental assistant text
 - structured status updates
 - source/citation metadata when safely available
+- clickable source references for backed `[n]` markers
 - error attached to the active assistant message
 - stop/cancel if task id is available
 
@@ -441,9 +443,11 @@ MVP rendering:
 - GFM tables and task checklists
 - Open WebUI reasoning/thinking blocks
 - status/progress rows
-- source snippets if provided
+- source references and snippets if provided
 
 The side panel renders assistant text with React markdown plus GFM and syntax highlighting plugins. Open WebUI reasoning is handled before markdown rendering: persisted `<details type="reasoning">...</details>`, common text tags such as `<think>...</think>`, `<thinking>...</thinking>`, `<reason>...</reason>`, `<reasoning>...</reasoning>`, `<thought>...</thought>`, and streamed reasoning fields such as `reasoning_content`, `reasoning`, or `thinking` become a collapsible reasoning panel. Unrecognized raw HTML remains text instead of mounting executable or styled DOM. User-authored messages remain plain text in the MVP UI.
+
+Open WebUI citation metadata is normalized into `CitationSource` records from stream `citation`/`source` events and from persisted assistant message fields such as `sources`, `citations`, `metadata.sources`, or `metadata.citations`. When a web-search event bundles multiple `document` and `metadata` entries into one tool result, the client splits them into individual source records so `[1]`, `[2]`, and later markers can resolve independently. Assistant markdown replaces backed `[n]` markers with compact numeric source buttons, leaves unbacked citation-looking text unchanged, renders a single sources disclosure below the answer, and toggles the source list plus URL/snippet details when the user selects a source.
 
 Follow-up rendering:
 

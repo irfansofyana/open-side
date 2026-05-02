@@ -180,12 +180,18 @@ Run this after chat rendering changes.
 9. Confirm thinking content appears in a collapsible reasoning panel while the final answer remains readable.
 10. Send a prompt that takes long enough to respond and confirm the assistant text appears incrementally when stream or persisted polling content is available.
 11. Send or load assistant text containing raw HTML such as `<strong>bold</strong>` and confirm it is not executed as HTML.
+12. Enable web search or a source-returning tool, then ask a current factual question.
+13. Confirm backed citation markers render as compact clickable source references.
+14. Confirm one sources disclosure button appears below the assistant answer.
+15. Confirm clicking the sources button shows/hides the source list, and clicking a source reveals URL/snippet details.
 
 Expected:
 
 - User messages remain plain text.
 - Assistant markdown renders headings, lists, task checklists, tables, links, inline code, and syntax-highlighted code blocks.
 - Open WebUI reasoning content renders from reasoning tags, reasoning details, or reasoning stream fields into a collapsible panel.
+- Backed citation markers render as compact source controls while unbacked `[n]` text stays plain.
+- Source lists are collapsed by default and can be expanded without overflowing the side panel.
 - Unrecognized raw HTML is not mounted as DOM.
 - Streaming state looks intentional while waiting for the first assistant content, and content updates incrementally when available.
 

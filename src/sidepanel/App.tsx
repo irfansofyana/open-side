@@ -31,6 +31,7 @@ import type {
   CapturedTabContext,
   ChatSummary,
   ChatTree,
+  CitationSource,
   FeatureFlags,
   OpenWebUIModel,
   ToolMenuItem,
@@ -96,6 +97,7 @@ type ChatMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  sources?: CitationSource[];
 };
 
 const getErrorMessage = (error: unknown): string =>
@@ -503,7 +505,9 @@ export function App({
 
       setChatMessages((messages) =>
         messages.map((message) =>
-          message.id === assistantId ? { ...message, content: result.assistantText } : message
+          message.id === assistantId
+            ? { ...message, content: result.assistantText, sources: result.sources }
+            : message
         )
       );
       setActiveChat(result.refreshedChat);
@@ -835,7 +839,7 @@ export function App({
                     </p>
                     {message.role === "assistant" ? (
                       message.content ? (
-                        <MarkdownMessage content={message.content} />
+                        <MarkdownMessage content={message.content} sources={message.sources} />
                       ) : (
                         <p className="message-status">Assistant is responding</p>
                       )

@@ -24,6 +24,7 @@
 - [x] Render GFM task checklists and tables.
 - [x] Render Open WebUI reasoning/thinking blocks.
 - [x] Render Open WebUI tool-call detail blocks with arguments and results.
+- [x] Render backed Open WebUI citation markers as clickable source references.
 - [x] Add clear streaming state for the active assistant message.
 - [x] Stream persisted polling deltas when direct HTTP stream content is empty.
 - [ ] Distinguish polling fallback from active token streaming in the UI only if useful for debugging or user trust.

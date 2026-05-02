@@ -1,4 +1,5 @@
 import type { StreamEvent } from "./types";
+import { normalizeCitationSource } from "./citations";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -34,6 +35,15 @@ export function parseSSELine(line: string): StreamEvent | undefined {
   const message =
     isRecord(firstChoice) && isRecord(firstChoice.message) ? firstChoice.message : undefined;
   const eventData = isRecord(parsed.data) ? parsed.data : undefined;
+
+  if ((parsed.type === "citation" || parsed.type === "source") && eventData) {
+    const citation = normalizeCitationSource(eventData);
+
+    if (citation) {
+      return { type: "citation", citation };
+    }
+  }
+
   const reasoning =
     delta?.reasoning_content ??
     delta?.reasoning ??

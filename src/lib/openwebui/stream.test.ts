@@ -43,6 +43,23 @@ test("parseSSELine extracts reasoning delta fields used by reasoning models", ()
   });
 });
 
+test("parseSSELine extracts Open WebUI citation events", () => {
+  expect(
+    parseSSELine(
+      'data: {"type":"citation","data":{"document":["Article text"],"metadata":[{"source":"Reuters","url":"https://example.com/article"}],"source":{"name":"Reuters","url":"https://example.com/article"}}}'
+    )
+  ).toEqual({
+    type: "citation",
+    citation: {
+      documents: ["Article text"],
+      index: 1,
+      metadata: [{ source: "Reuters", url: "https://example.com/article" }],
+      name: "Reuters",
+      url: "https://example.com/article"
+    }
+  });
+});
+
 test("parseSSELine handles done, status, usage, error, and raw text", () => {
   expect(parseSSELine("data: [DONE]")).toEqual({ type: "done" });
   expect(parseSSELine('data: {"status":"Searching"}')).toEqual({

@@ -1,10 +1,20 @@
-import { Children, cloneElement, isValidElement, type ReactNode } from "react";
+import {
+  Children,
+  cloneElement,
+  isValidElement,
+  useMemo,
+  useState,
+  type ReactNode
+} from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 
+import type { CitationSource } from "../lib/openwebui/types";
+
 type MarkdownMessageProps = {
   content: string;
+  sources?: CitationSource[];
 };
 
 type MessageSegment =
@@ -191,15 +201,82 @@ const getTextContent = (children: ReactNode): string =>
     .join("")
     .trim();
 
-function MarkdownBody({ content }: { content: string }) {
+const applyCitationLinks = (content: string, sources: CitationSource[]): string => {
+  if (sources.length === 0) {
+    return content;
+  }
+
+  const sourceByIndex = new Map(sources.map((source) => [source.index, source]));
+  let isFencedCode = false;
+
+  return content
+    .split("\n")
+    .map((line) => {
+      if (/^\s*(```|~~~)/.test(line)) {
+        isFencedCode = !isFencedCode;
+        return line;
+      }
+
+      if (isFencedCode) {
+        return line;
+      }
+
+      return line.replace(/\[(\d+)\]/g, (match, value) => {
+        const source = sourceByIndex.get(Number(value));
+
+        return source ? `[${source.index}](#citation-${source.index})` : match;
+      });
+    })
+    .join("\n");
+};
+
+function MarkdownBody({
+  content,
+  onCitationSelect,
+  selectedSourceIndex,
+  sources = []
+}: {
+  content: string;
+  onCitationSelect?: (source: CitationSource) => void;
+  selectedSourceIndex?: number;
+  sources?: CitationSource[];
+}) {
+  const sourceByIndex = useMemo(
+    () => new Map(sources.map((source) => [source.index, source])),
+    [sources]
+  );
+  const renderedContent = useMemo(
+    () => applyCitationLinks(content, sources),
+    [content, sources]
+  );
+
   return (
     <ReactMarkdown
       components={{
-        a: ({ children, node: _node, ...props }) => (
-          <a {...props} rel="noreferrer" target="_blank">
-            {children}
-          </a>
-        ),
+        a: ({ children, href, node: _node, ...props }) => {
+          const citationMatch = href?.match(/^#citation-(\d+)$/);
+          const source = citationMatch ? sourceByIndex.get(Number(citationMatch[1])) : undefined;
+
+          if (source) {
+            return (
+              <button
+                aria-label={`${source.name} citation ${source.index}`}
+                aria-pressed={source.index === selectedSourceIndex}
+                className="citation-link"
+                onClick={() => onCitationSelect?.(source)}
+                type="button"
+              >
+                {source.index}
+              </button>
+            );
+          }
+
+          return (
+            <a {...props} href={href} rel="noreferrer" target="_blank">
+              {children}
+            </a>
+          );
+        },
         li: ({ children, node: _node, ...props }) => {
           const label = getTextContent(children);
           const nextChildren = Children.map(children, (child) => {
@@ -220,7 +297,7 @@ function MarkdownBody({ content }: { content: string }) {
       rehypePlugins={[rehypeHighlight]}
       remarkPlugins={[remarkGfm]}
     >
-      {content}
+      {renderedContent}
     </ReactMarkdown>
   );
 }
@@ -266,8 +343,33 @@ function ToolCallDetails({
   );
 }
 
-export function MarkdownMessage({ content }: MarkdownMessageProps) {
+export function MarkdownMessage({ content, sources = [] }: MarkdownMessageProps) {
+  const [areSourcesOpen, setAreSourcesOpen] = useState(false);
+  const [selectedSourceIndex, setSelectedSourceIndex] = useState<number>();
   const segments = parseMessageSegments(content);
+  const selectedSource =
+    selectedSourceIndex === undefined
+      ? undefined
+      : sources.find((source) => source.index === selectedSourceIndex);
+  const sourcesLabel = `${sources.length} ${sources.length === 1 ? "Source" : "Sources"}`;
+  const handleCitationSelect = (source: CitationSource) => {
+    const nextSourceIndex = selectedSourceIndex === source.index ? undefined : source.index;
+
+    setSelectedSourceIndex(nextSourceIndex);
+
+    if (nextSourceIndex !== undefined) {
+      setAreSourcesOpen(true);
+    }
+  };
+  const handleSourcesToggle = () => {
+    const nextIsOpen = !areSourcesOpen;
+
+    setAreSourcesOpen(nextIsOpen);
+
+    if (!nextIsOpen) {
+      setSelectedSourceIndex(undefined);
+    }
+  };
 
   return (
     <div className="markdown-message">
@@ -287,9 +389,59 @@ export function MarkdownMessage({ content }: MarkdownMessageProps) {
         ) : segment.type === "toolCall" ? (
           <ToolCallDetails key={`${segment.type}-${index}`} segment={segment} />
         ) : (
-          <MarkdownBody content={segment.content} key={`${segment.type}-${index}`} />
+          <MarkdownBody
+            content={segment.content}
+            key={`${segment.type}-${index}`}
+            onCitationSelect={handleCitationSelect}
+            selectedSourceIndex={selectedSourceIndex}
+            sources={sources}
+          />
         )
       )}
+      {sources.length > 0 ? (
+        <div className="citation-sources" aria-label="Sources">
+          <button
+            aria-expanded={areSourcesOpen}
+            className="citation-sources-toggle"
+            onClick={handleSourcesToggle}
+            type="button"
+          >
+            <span className="citation-sources-toggle-label">
+              {areSourcesOpen ? "Hide" : "Show"} {sourcesLabel}
+            </span>
+          </button>
+          {areSourcesOpen ? (
+            <>
+              <div className="citation-source-list">
+                {sources.map((source) => (
+                  <button
+                    aria-label={`Open source ${source.index}: ${source.name}`}
+                    aria-pressed={selectedSourceIndex === source.index}
+                    className="citation-source-button"
+                    key={`${source.index}-${source.url ?? source.name}`}
+                    onClick={() => handleCitationSelect(source)}
+                    type="button"
+                  >
+                    <span className="citation-source-index">{source.index}</span>
+                    <span className="citation-source-name">{source.name}</span>
+                  </button>
+                ))}
+              </div>
+              {selectedSource ? (
+                <section className="citation-detail" aria-label="Citation details">
+                  <h3>{selectedSource.name}</h3>
+                  {selectedSource.url ? (
+                    <a href={selectedSource.url} rel="noreferrer" target="_blank">
+                      {selectedSource.url}
+                    </a>
+                  ) : null}
+                  {selectedSource.documents[0] ? <p>{selectedSource.documents[0]}</p> : null}
+                </section>
+              ) : null}
+            </>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 import { MarkdownMessage } from "./MarkdownMessage";
 
@@ -61,6 +61,133 @@ test("MarkdownMessage renders GFM tables and task lists", () => {
   expect(screen.getByRole("table")).toBeInTheDocument();
   expect(screen.getByRole("columnheader", { name: "Feature" })).toBeInTheDocument();
   expect(screen.getByRole("cell", { name: "Working" })).toBeInTheDocument();
+});
+
+test("MarkdownMessage renders backed citations as clickable sources", () => {
+  render(
+    <MarkdownMessage
+      content="The minister is Purbaya [1]. Another marker [2] stays plain."
+      sources={[
+        {
+          documents: ["Reuters reported the appointment from Jakarta."],
+          index: 1,
+          metadata: [{ source: "Reuters", url: "https://example.com/reuters" }],
+          name: "Reuters",
+          url: "https://example.com/reuters"
+        }
+      ]}
+    />
+  );
+
+  const inlineCitation = screen.getByRole("button", { name: "Reuters citation 1" });
+
+  expect(inlineCitation).toHaveTextContent("1");
+  expect(inlineCitation).not.toHaveTextContent("Reuters");
+  expect(screen.getByText(/Another marker \[2\] stays plain/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Show 1 Source" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Open source 1: Reuters" })).not.toBeInTheDocument();
+
+  fireEvent.click(inlineCitation);
+
+  expect(screen.getByRole("button", { name: "Hide 1 Source" })).toHaveAttribute(
+    "aria-expanded",
+    "true"
+  );
+  expect(screen.getByRole("heading", { name: "Reuters" })).toBeInTheDocument();
+  expect(screen.getByText("Reuters reported the appointment from Jakarta.")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "https://example.com/reuters" })).toHaveAttribute(
+    "href",
+    "https://example.com/reuters"
+  );
+});
+
+test("MarkdownMessage keeps long inline citation titles compact", () => {
+  render(
+    <MarkdownMessage
+      content="Coverage was reported [1]."
+      sources={[
+        {
+          documents: ["Long source snippet."],
+          index: 1,
+          metadata: [{ title: "Gibran completes first year in largely symbolic role" }],
+          name: "Gibran completes first year in largely symbolic role - Politics - The Jakarta Post",
+          url: "https://example.com/long-source"
+        }
+      ]}
+    />
+  );
+
+  const inlineCitation = screen.getByRole("button", {
+    name: "Gibran completes first year in largely symbolic role - Politics - The Jakarta Post citation 1"
+  });
+
+  expect(inlineCitation).toHaveTextContent("1");
+  expect(inlineCitation).not.toHaveTextContent("Gibran");
+});
+
+test("MarkdownMessage toggles selected citation details", () => {
+  render(
+    <MarkdownMessage
+      content="Taiwan president context [1][2]."
+      sources={[
+        {
+          documents: ["First source snippet."],
+          index: 1,
+          metadata: [{ title: "First source", source: "https://example.com/first" }],
+          name: "First source",
+          url: "https://example.com/first"
+        },
+        {
+          documents: ["Second source snippet."],
+          index: 2,
+          metadata: [{ title: "Second source", source: "https://example.com/second" }],
+          name: "Second source",
+          url: "https://example.com/second"
+        }
+      ]}
+    />
+  );
+
+  const sourcesToggle = screen.getByRole("button", { name: "Show 2 Sources" });
+
+  expect(sourcesToggle).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("button", { name: "Open source 1: First source" })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Citation details")).not.toBeInTheDocument();
+
+  fireEvent.click(sourcesToggle);
+
+  expect(screen.getByRole("button", { name: "Hide 2 Sources" })).toHaveAttribute(
+    "aria-expanded",
+    "true"
+  );
+
+  const firstSource = screen.getByRole("button", { name: "Open source 1: First source" });
+  const secondSource = screen.getByRole("button", { name: "Open source 2: Second source" });
+
+  fireEvent.click(firstSource);
+
+  expect(firstSource).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("heading", { name: "First source" })).toBeInTheDocument();
+
+  fireEvent.click(secondSource);
+
+  expect(firstSource).toHaveAttribute("aria-pressed", "false");
+  expect(secondSource).toHaveAttribute("aria-pressed", "true");
+  expect(screen.queryByRole("heading", { name: "First source" })).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Second source" })).toBeInTheDocument();
+
+  fireEvent.click(secondSource);
+
+  expect(secondSource).toHaveAttribute("aria-pressed", "false");
+  expect(screen.queryByLabelText("Citation details")).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Hide 2 Sources" }));
+
+  expect(screen.getByRole("button", { name: "Show 2 Sources" })).toHaveAttribute(
+    "aria-expanded",
+    "false"
+  );
+  expect(screen.queryByRole("button", { name: "Open source 1: First source" })).not.toBeInTheDocument();
 });
 
 test("MarkdownMessage renders Open WebUI reasoning details safely", () => {

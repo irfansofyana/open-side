@@ -298,6 +298,60 @@ test("connected user can send a prompt and see streamed assistant text", async (
   expect(await screen.findByText("Fresh answer")).toBeInTheDocument();
 });
 
+test("assistant messages render returned citation sources", async () => {
+  const connect = vi.fn().mockResolvedValue(connectionResult);
+  const sendMessage = vi.fn(async ({ onContent }) => {
+    onContent("The minister is Purbaya [1].");
+    return {
+      assistantText: "The minister is Purbaya [1].",
+      chatId: "chat-1",
+      refreshedChat: {
+        id: "chat-1",
+        title: "Active chat",
+        messages: {}
+      },
+      sources: [
+        {
+          documents: ["Reuters reported the appointment from Jakarta."],
+          index: 1,
+          metadata: [{ source: "Reuters", url: "https://example.com/reuters" }],
+          name: "Reuters",
+          url: "https://example.com/reuters"
+        }
+      ]
+    };
+  });
+
+  render(<App connect={connect} restoreConnection={emptyRestore} sendMessage={sendMessage} />);
+
+  fireEvent.change(await screen.findByLabelText("Server URL"), {
+    target: { value: "https://openwebui.example.com" }
+  });
+  fireEvent.change(screen.getByLabelText("Email or username"), {
+    target: { value: "ada@example.com" }
+  });
+  fireEvent.change(screen.getByLabelText("Password"), {
+    target: { value: "secret" }
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+  expect(await screen.findByRole("heading", { name: "Ready" })).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("Message"), {
+    target: { value: "Who is the minister?" }
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+  expect(await screen.findByRole("button", { name: "Reuters citation 1" })).toHaveTextContent("1");
+  expect(screen.getByRole("button", { name: "Show 1 Source" })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Show 1 Source" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open source 1: Reuters" }));
+
+  expect(screen.getByRole("heading", { name: "Reuters" })).toBeInTheDocument();
+  expect(screen.getByText("Reuters reported the appointment from Jakarta.")).toBeInTheDocument();
+});
+
 test("composer submits with Enter and keeps Shift Enter for multiline prompts", async () => {
   const connect = vi.fn().mockResolvedValue(connectionResult);
   const sendMessage = vi.fn(async ({ onContent }) => {

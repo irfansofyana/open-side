@@ -1,5 +1,6 @@
 import { buildCompletionPayload } from "../openwebui/requestBuilders";
 import { readStreamEvents } from "../openwebui/stream";
+import { normalizeCitationSources } from "../openwebui/citations";
 import type {
   BuildCompletionPayloadInput,
   ChatCompletionRequest,
@@ -7,6 +8,7 @@ import type {
   ChatMutationResult,
   ChatSummary,
   ChatTree,
+  CitationSource,
   StreamEvent
 } from "../openwebui/types";
 
@@ -47,6 +49,7 @@ export type SendStreamingMessageInput = Omit<
 
 export type SendStreamingMessageResult = {
   assistantText: string;
+  sources?: CitationSource[];
 };
 
 export type SendPersistedMessageInput = Omit<
@@ -70,12 +73,14 @@ export type SendPersistedMessageResult = {
   assistantText: string;
   chatId: string;
   refreshedChat: ChatTree;
+  sources?: CitationSource[];
 };
 
 export type DisplayChatMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  sources?: CitationSource[];
 };
 
 export type LoadChatForDisplayResult = {
@@ -94,26 +99,36 @@ const buildAssistantMessage = ({
   done = false,
   modelId,
   timestamp,
-  userMessageId
+  userMessageId,
+  sources
 }: {
   assistantMessageId: string;
   content?: string;
   done?: boolean;
   modelId: string;
+  sources?: CitationSource[];
   timestamp: number;
   userMessageId: string;
-}): Record<string, unknown> => ({
-  id: assistantMessageId,
-  parentId: userMessageId,
-  role: "assistant",
-  content,
-  timestamp,
-  childrenIds: [],
-  model: modelId,
-  modelName: modelId,
-  modelIdx: 0,
-  done
-});
+}): Record<string, unknown> => {
+  const message: Record<string, unknown> = {
+    id: assistantMessageId,
+    parentId: userMessageId,
+    role: "assistant",
+    content,
+    timestamp,
+    childrenIds: [],
+    model: modelId,
+    modelName: modelId,
+    modelIdx: 0,
+    done
+  };
+
+  if (sources && sources.length > 0) {
+    message.sources = sources;
+  }
+
+  return message;
+};
 
 const buildInitialChatMutation = ({
   assistantMessageId,
@@ -198,6 +213,34 @@ const getRawChat = (chat: ChatTree): Record<string, unknown> => {
 const getMessageContent = (message: Record<string, unknown>): string | undefined =>
   typeof message.content === "string" ? message.content : undefined;
 
+const getMessageSources = (message: unknown): CitationSource[] => {
+  if (!isRecord(message)) {
+    return [];
+  }
+
+  const metadata = isRecord(message.metadata) ? message.metadata : undefined;
+  const candidates = [
+    message.sources,
+    message.citations,
+    message.source,
+    message.citation,
+    metadata?.sources,
+    metadata?.citations,
+    metadata?.source,
+    metadata?.citation
+  ];
+
+  for (const candidate of candidates) {
+    const sources = normalizeCitationSources(candidate);
+
+    if (sources.length > 0) {
+      return sources;
+    }
+  }
+
+  return [];
+};
+
 const getMessageContentWithHistory = (
   message: Record<string, unknown>,
   historyMessages: Record<string, unknown>
@@ -268,10 +311,22 @@ const toDisplayMessages = (chat: ChatTree): DisplayChatMessage[] => {
       rawArrayMessages.length > 0
         ? getMessageContentWithHistory(message, rawHistoryMessages)
         : getMessageContent(message);
+    const historyMessage =
+      typeof message.id === "string" && isRecord(rawHistoryMessages[message.id])
+        ? rawHistoryMessages[message.id]
+        : undefined;
+    const sources = [...getMessageSources(message), ...getMessageSources(historyMessage ?? {})];
+    const displayMessage = role && content !== undefined
+      ? { id: getMessageId(message, index), role, content }
+      : undefined;
 
-    return role && content !== undefined
-      ? [{ id: getMessageId(message, index), role, content }]
-      : [];
+    if (!displayMessage) {
+      return [];
+    }
+
+    return sources.length > 0 && role === "assistant"
+      ? [{ ...displayMessage, sources: normalizeCitationSources(sources) }]
+      : [displayMessage];
   });
 };
 
@@ -430,6 +485,53 @@ const getPersistedAssistantText = (chat: ChatTree, assistantMessageId: string): 
     : "";
 };
 
+const getPersistedAssistantSources = (
+  chat: ChatTree,
+  assistantMessageId: string
+): CitationSource[] => {
+  const historyMessage = chat.messages[assistantMessageId];
+
+  if (isRecord(historyMessage)) {
+    const sources = getMessageSources(historyMessage);
+
+    if (sources.length > 0) {
+      return sources;
+    }
+  }
+
+  const rawChat = chat.raw?.chat;
+  const rawHistoryMessages =
+    isRecord(rawChat) && isRecord(rawChat.history)
+      ? rawChat.history.messages
+      : undefined;
+  const rawHistoryMessage =
+    isRecord(rawHistoryMessages)
+      ? rawHistoryMessages[assistantMessageId]
+      : undefined;
+
+  if (isRecord(rawHistoryMessage)) {
+    const sources = getMessageSources(rawHistoryMessage);
+
+    if (sources.length > 0) {
+      return sources;
+    }
+  }
+
+  const rawArrayMessages =
+    isRecord(rawChat)
+      ? rawChat.messages
+      : chat.raw?.messages;
+  const arrayMessage = Array.isArray(rawArrayMessages)
+    ? rawArrayMessages.find(
+        (message) =>
+          isRecord(message) &&
+          message.id === assistantMessageId
+      )
+    : undefined;
+
+  return isRecord(arrayMessage) ? getMessageSources(arrayMessage) : [];
+};
+
 const appendContentDelta = ({
   assistantText,
   content,
@@ -530,9 +632,14 @@ export async function sendStreamingMessage({
   const stream = await client.streamChatCompletion(payload);
   let assistantText = "";
   let isReasoningOpen = false;
+  let sources: CitationSource[] = [];
 
   for await (const event of readStreamEvents(stream)) {
     onEvent?.(event);
+
+    if (event.type === "citation") {
+      sources = normalizeCitationSources([...sources, event.citation]);
+    }
 
     if (event.type === "reasoning") {
       const result = appendReasoningDelta({
@@ -563,7 +670,7 @@ export async function sendStreamingMessage({
   const closed = closeReasoningBlock({ assistantText, isReasoningOpen, onContent });
   assistantText = closed.assistantText;
 
-  return { assistantText };
+  return sources.length > 0 ? { assistantText, sources } : { assistantText };
 }
 
 export async function listRecentChats({
@@ -657,9 +764,14 @@ export async function sendPersistedMessage({
   const stream = await client.streamChatCompletion(completionPayload);
   let assistantText = "";
   let isReasoningOpen = false;
+  let sources: CitationSource[] = [];
 
   for await (const event of readStreamEvents(stream)) {
     onEvent?.(event);
+
+    if (event.type === "citation") {
+      sources = normalizeCitationSources([...sources, event.citation]);
+    }
 
     if (event.type === "reasoning") {
       const result = appendReasoningDelta({
@@ -705,6 +817,11 @@ export async function sendPersistedMessage({
       assistantText = emitPersistedDelta({ assistantText, onContent, persistedText });
     }
 
+    sources = normalizeCitationSources([
+      ...sources,
+      ...getPersistedAssistantSources(refreshedChat, assistantMessageId)
+    ]);
+
     const persistedMessage = refreshedChat.messages[assistantMessageId];
     const isDone =
       isRecord(persistedMessage) && typeof persistedMessage.done === "boolean"
@@ -738,16 +855,22 @@ export async function sendPersistedMessage({
       content: assistantText,
       done: true,
       modelId: payloadInput.modelId,
+      sources,
       timestamp: Math.floor(now() / 1000),
       userMessageId
     })
   });
 
   refreshedChat = await client.getChat(chatId);
+  sources = normalizeCitationSources([
+    ...sources,
+    ...getPersistedAssistantSources(refreshedChat, assistantMessageId)
+  ]);
 
   return {
     assistantText,
     chatId,
-    refreshedChat
+    refreshedChat,
+    ...(sources.length > 0 ? { sources } : {})
   };
 }

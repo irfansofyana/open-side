@@ -92,6 +92,40 @@ test("sendStreamingMessage preserves reasoning chunks in the assistant text stre
   expect(eventTypes).toEqual(["reasoning", "content", "done"]);
 });
 
+test("sendStreamingMessage returns citation sources from Open WebUI events", async () => {
+  const client = {
+    streamChatCompletion: vi.fn(async () =>
+      createStream([
+        'data: {"type":"citation","data":{"document":["Reuters says Purbaya was appointed."],"metadata":[{"source":"Reuters","url":"https://example.com/reuters"}],"source":{"name":"Reuters","url":"https://example.com/reuters"}}}\n\n',
+        'data: {"choices":[{"delta":{"content":"The minister is Purbaya [1]."}}]}\n\n',
+        "data: [DONE]\n\n"
+      ])
+    )
+  };
+  const eventTypes: string[] = [];
+
+  await expect(
+    sendStreamingMessage({
+      client,
+      modelId: "openrouter.anthropic/claude-haiku-4.5",
+      prompt: "Who is the minister?",
+      onEvent: (event) => eventTypes.push(event.type)
+    })
+  ).resolves.toEqual({
+    assistantText: "The minister is Purbaya [1].",
+    sources: [
+      {
+        documents: ["Reuters says Purbaya was appointed."],
+        index: 1,
+        metadata: [{ source: "Reuters", url: "https://example.com/reuters" }],
+        name: "Reuters",
+        url: "https://example.com/reuters"
+      }
+    ]
+  });
+  expect(eventTypes).toEqual(["citation", "content", "done"]);
+});
+
 test("sendStreamingMessage forwards payload options and throws on stream error event", async () => {
   const client = {
     streamChatCompletion: vi.fn(async () =>
@@ -347,6 +381,83 @@ test("sendPersistedMessage streams persisted polling deltas before completion fi
 
   expect(contentChunks).toEqual(["Hello", " streaming", " world"]);
   expect(delay).toHaveBeenCalledWith(5);
+});
+
+test("sendPersistedMessage carries citation sources into completion and result", async () => {
+  const refreshedChat: ChatTree = {
+    id: "chat-1",
+    title: "Sources",
+    currentId: "assistant-1",
+    messages: {
+      "assistant-1": {
+        id: "assistant-1",
+        role: "assistant",
+        content: "The minister is Purbaya [1].",
+        sources: [
+          {
+            document: ["Reuters says Purbaya was appointed."],
+            metadata: [{ source: "Reuters", url: "https://example.com/reuters" }],
+            source: { name: "Reuters", url: "https://example.com/reuters" }
+          }
+        ]
+      }
+    }
+  };
+  const client = {
+    createChat: vi.fn(async () => ({ id: "chat-1" })),
+    updateChat: vi.fn(async () => ({ id: "chat-1" })),
+    streamChatCompletion: vi.fn(async () =>
+      createStream([
+        'data: {"type":"citation","data":{"document":["Reuters says Purbaya was appointed."],"metadata":[{"source":"Reuters","url":"https://example.com/reuters"}],"source":{"name":"Reuters","url":"https://example.com/reuters"}}}\n\n',
+        'data: {"choices":[{"delta":{"content":"The minister is Purbaya [1]."}}]}\n\n',
+        "data: [DONE]\n\n"
+      ])
+    ),
+    getChat: vi.fn(async () => refreshedChat),
+    completeChat: vi.fn(async () => ({ ok: true }))
+  };
+
+  await expect(
+    sendPersistedMessage({
+      client,
+      idGenerator: vi
+        .fn()
+        .mockReturnValueOnce("user-1")
+        .mockReturnValueOnce("assistant-1")
+        .mockReturnValueOnce("session-1"),
+      modelId: "openrouter/fast",
+      now: () => 1714528800000,
+      prompt: "Who is the minister?"
+    })
+  ).resolves.toEqual({
+    assistantText: "The minister is Purbaya [1].",
+    chatId: "chat-1",
+    refreshedChat,
+    sources: [
+      {
+        documents: ["Reuters says Purbaya was appointed."],
+        index: 1,
+        metadata: [{ source: "Reuters", url: "https://example.com/reuters" }],
+        name: "Reuters",
+        url: "https://example.com/reuters"
+      }
+    ]
+  });
+  expect(client.completeChat).toHaveBeenCalledWith(
+    expect.objectContaining({
+      message: expect.objectContaining({
+        sources: [
+          {
+            documents: ["Reuters says Purbaya was appointed."],
+            index: 1,
+            metadata: [{ source: "Reuters", url: "https://example.com/reuters" }],
+            name: "Reuters",
+            url: "https://example.com/reuters"
+          }
+        ]
+      })
+    })
+  );
 });
 
 test("sendPersistedMessage continues the active chat instead of creating a new one", async () => {
@@ -624,6 +735,59 @@ test("loadChatForDisplay uses history content when Open WebUI array messages are
         id: "assistant-2",
         role: "assistant",
         content: "## Markdown example\n\n- item one\n- item two"
+      }
+    ]
+  });
+});
+
+test("loadChatForDisplay attaches persisted citation sources to assistant messages", async () => {
+  const chat: ChatTree = {
+    id: "chat-1",
+    title: "Loaded chat",
+    currentId: "assistant-1",
+    messages: {},
+    raw: {
+      chat: {
+        messages: [
+          { id: "user-1", role: "user", content: "Who is the minister?", timestamp: 1 },
+          {
+            id: "assistant-1",
+            role: "assistant",
+            content: "The minister is Purbaya [1].",
+            timestamp: 2,
+            citations: [
+              {
+                document: ["Reuters says Purbaya was appointed."],
+                metadata: [{ source: "Reuters", url: "https://example.com/reuters" }],
+                source: { name: "Reuters", url: "https://example.com/reuters" }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  };
+  const client = {
+    getChat: vi.fn(async () => chat)
+  };
+
+  await expect(loadChatForDisplay({ chatId: "chat-1", client })).resolves.toEqual({
+    chat,
+    messages: [
+      { id: "user-1", role: "user", content: "Who is the minister?" },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        content: "The minister is Purbaya [1].",
+        sources: [
+          {
+            documents: ["Reuters says Purbaya was appointed."],
+            index: 1,
+            metadata: [{ source: "Reuters", url: "https://example.com/reuters" }],
+            name: "Reuters",
+            url: "https://example.com/reuters"
+          }
+        ]
       }
     ]
   });
