@@ -1,7 +1,19 @@
-import { useEffect, useState, type FormEvent } from "react";
+import {
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent
+} from "react";
+import { Check, ChevronDown, History, Plus, Search, SendHorizontal } from "lucide-react";
 
 import { MarkdownMessage } from "./MarkdownMessage";
-import { forgetServerConnection } from "../lib/chrome/storage";
+import {
+  forgetServerConnection,
+  saveSelectedModelPreference as saveSelectedModelPreferenceToStorage
+} from "../lib/chrome/storage";
 import { OpenWebUIClient } from "../lib/openwebui/client";
 import type { ChatSummary, ChatTree, OpenWebUIModel } from "../lib/openwebui/types";
 import {
@@ -28,6 +40,7 @@ type AppProps = {
   loadChat?: (connection: ConnectToServerResult, chatId: string) => Promise<LoadChatForDisplayResult>;
   loadRecentChats?: (connection: ConnectToServerResult) => Promise<ChatSummary[]>;
   restoreConnection?: () => Promise<RestoreSavedConnectionResult>;
+  saveSelectedModelPreference?: (serverId: string, modelId: string) => Promise<unknown>;
   sendMessage?: (input: AppSendMessageInput) => Promise<SendPersistedMessageResult>;
 };
 
@@ -93,6 +106,127 @@ const promptShortcuts = [
   }
 ];
 
+const getModelLabel = (model: OpenWebUIModel | undefined, fallbackId: string): string =>
+  model?.name ?? model?.id ?? fallbackId;
+
+type ModelPickerProps = {
+  disabled?: boolean;
+  models: OpenWebUIModel[];
+  onSelect: (modelId: string) => void;
+  selectedModelId: string;
+};
+
+function ModelPicker({ disabled = false, models, onSelect, selectedModelId }: ModelPickerProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const deferredSearchTerm = useDeferredValue(searchTerm);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const selectedModel = useMemo(
+    () => models.find((model) => model.id === selectedModelId),
+    [models, selectedModelId]
+  );
+  const selectedModelLabel = getModelLabel(selectedModel, selectedModelId || "Select model");
+  const filteredModels = useMemo(() => {
+    const query = deferredSearchTerm.trim().toLowerCase();
+
+    if (!query) {
+      return models;
+    }
+
+    return models.filter((model) => {
+      const label = getModelLabel(model, model.id).toLowerCase();
+      return label.includes(query) || model.id.toLowerCase().includes(query);
+    });
+  }, [deferredSearchTerm, models]);
+
+  useEffect(() => {
+    if (isOpen) {
+      searchInputRef.current?.focus();
+    }
+  }, [isOpen]);
+
+  const handleSelectModel = (modelId: string) => {
+    onSelect(modelId);
+    setSearchTerm("");
+    setIsOpen(false);
+  };
+
+  return (
+    <div className="model-picker">
+      <button
+        aria-expanded={isOpen}
+        aria-haspopup="listbox"
+        aria-label={`Model ${selectedModelLabel}`}
+        className="model-picker-trigger"
+        disabled={disabled}
+        onClick={() => setIsOpen((open) => !open)}
+        title={selectedModelLabel}
+        type="button"
+      >
+        <span className="model-picker-copy">
+          <span className="model-picker-kicker">Model</span>
+          <span className="model-picker-value">{selectedModelLabel}</span>
+        </span>
+        <ChevronDown aria-hidden="true" className="control-icon" />
+      </button>
+
+      {isOpen ? (
+        <div
+          className="model-popover"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              setSearchTerm("");
+              setIsOpen(false);
+            }
+          }}
+        >
+          <label className="model-search">
+            <Search aria-hidden="true" className="control-icon" />
+            <span className="sr-only">Search models</span>
+            <input
+              aria-label="Search models"
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Search models"
+              ref={searchInputRef}
+              type="search"
+              value={searchTerm}
+            />
+          </label>
+          <div className="model-list" role="listbox" aria-label="Models">
+            {filteredModels.length > 0 ? (
+              filteredModels.map((model) => {
+                const modelLabel = getModelLabel(model, model.id);
+                const isSelected = model.id === selectedModelId;
+
+                return (
+                  <button
+                    aria-selected={isSelected}
+                    className={`model-option${isSelected ? " model-option-selected" : ""}`}
+                    key={model.id}
+                    onClick={() => handleSelectModel(model.id)}
+                    role="option"
+                    type="button"
+                  >
+                    <span className="model-option-text">
+                      <span className="model-option-name">{modelLabel}</span>
+                      {model.id !== modelLabel ? (
+                        <span className="model-option-id">{model.id}</span>
+                      ) : null}
+                    </span>
+                    {isSelected ? <Check aria-hidden="true" className="control-icon" /> : null}
+                  </button>
+                );
+              })
+            ) : (
+              <p className="model-empty">No matching models</p>
+            )}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 const defaultLoadRecentChats = (connection: ConnectToServerResult): Promise<ChatSummary[]> =>
   listRecentChats({
     client: createClient(connection)
@@ -107,12 +241,22 @@ const defaultLoadChat = (
     client: createClient(connection)
   });
 
+const defaultSaveSelectedModelPreference = (
+  serverId: string,
+  modelId: string
+): Promise<unknown> =>
+  saveSelectedModelPreferenceToStorage({
+    modelId,
+    serverId
+  });
+
 export function App({
   connect = connectToServer,
   forgetSavedServer = forgetServerConnection,
   loadChat = defaultLoadChat,
   loadRecentChats = defaultLoadRecentChats,
   restoreConnection = restoreSavedConnection,
+  saveSelectedModelPreference = defaultSaveSelectedModelPreference,
   sendMessage = defaultSendMessage
 }: AppProps) {
   const [serverUrl, setServerUrl] = useState("");
@@ -131,9 +275,6 @@ export function App({
   const [isLoadingRecentChats, setIsLoadingRecentChats] = useState(false);
   const [isRecentChatsOpen, setIsRecentChatsOpen] = useState(false);
   const [recentChats, setRecentChats] = useState<ChatSummary[]>([]);
-
-  const selectedModelLabel =
-    connection?.models.find((model) => model.id === selectedModelId)?.name ?? selectedModelId;
 
   useEffect(() => {
     let isMounted = true;
@@ -262,6 +403,34 @@ export function App({
     }
   };
 
+  const handleMessageKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (
+      event.key !== "Enter" ||
+      event.shiftKey ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.nativeEvent.isComposing
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    event.currentTarget.form?.requestSubmit();
+  };
+
+  const handleSelectModel = (modelId: string) => {
+    setSelectedModelId(modelId);
+
+    if (!connection) {
+      return;
+    }
+
+    saveSelectedModelPreference(connection.server.id, modelId).catch((error) => {
+      setErrorMessage(getErrorMessage(error));
+    });
+  };
+
   const handleNewChat = () => {
     setActiveChat(undefined);
     setChatMessages([]);
@@ -336,11 +505,12 @@ export function App({
         {connection ? <span className="server-chip">{connection.server.displayName}</span> : null}
         {connection ? (
           <button
-            className="top-bar-action"
+            className="top-bar-action icon-text-action"
             disabled={isLoadingRecentChats || isSending}
             onClick={handleRecentChats}
             type="button"
           >
+            <History aria-hidden="true" className="control-icon" />
             {isLoadingRecentChats ? "Loading..." : "Recent chats"}
           </button>
         ) : null}
@@ -377,33 +547,21 @@ export function App({
               </div>
             ) : null}
             <div className="chat-toolbar" aria-label="Chat controls">
-              <label className="field-label compact-label" htmlFor="model">
-                Model
-              </label>
-              <div className="chat-controls">
-                <select
-                  className="field-control model-select"
-                  id="model"
-                  name="model"
-                  onChange={(event) => setSelectedModelId(event.target.value)}
-                  title={selectedModelLabel}
-                  value={selectedModelId}
-                >
-                  {connection.models.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.name ?? model.id}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  className="secondary-action new-chat-action"
-                  disabled={isSending}
-                  onClick={handleNewChat}
-                  type="button"
-                >
-                  New chat
-                </button>
-              </div>
+              <ModelPicker
+                disabled={isSending}
+                models={connection.models}
+                onSelect={handleSelectModel}
+                selectedModelId={selectedModelId}
+              />
+              <button
+                className="secondary-action icon-text-action new-chat-action"
+                disabled={isSending}
+                onClick={handleNewChat}
+                type="button"
+              >
+                <Plus aria-hidden="true" className="control-icon" />
+                New chat
+              </button>
             </div>
 
             <div className="message-list" role="log" aria-label="Messages" aria-live="polite">
@@ -448,28 +606,37 @@ export function App({
           </section>
 
           <form className="composer" onSubmit={handleChatSubmit}>
-            <label className="field-label" htmlFor="message">
+            <label className="sr-only" htmlFor="message">
               Message
             </label>
-            <textarea
-              className="field-control message-input"
-              id="message"
-              name="message"
-              onChange={(event) => setPrompt(event.target.value)}
-              value={prompt}
-            />
+            <div className="composer-card">
+              <textarea
+                className="message-input"
+                id="message"
+                name="message"
+                onChange={(event) => setPrompt(event.target.value)}
+                onKeyDown={handleMessageKeyDown}
+                placeholder="Message Open WebUI"
+                rows={1}
+                value={prompt}
+              />
+              <div className="composer-footer">
+                <span className="composer-hint">Enter to send • Shift+Enter for newline</span>
+                <button
+                  aria-label={isSending ? "Sending" : "Send"}
+                  className="send-action"
+                  disabled={isSending || !selectedModelId || !prompt.trim()}
+                  type="submit"
+                >
+                  <SendHorizontal aria-hidden="true" className="control-icon" />
+                </button>
+              </div>
+            </div>
             {errorMessage ? (
               <p className="error-message" role="alert">
                 {errorMessage}
               </p>
             ) : null}
-            <button
-              type="submit"
-              className="primary-action"
-              disabled={isSending || !selectedModelId || !prompt.trim()}
-            >
-              {isSending ? "Sending..." : "Send"}
-            </button>
           </form>
         </>
       ) : isRestoring ? (

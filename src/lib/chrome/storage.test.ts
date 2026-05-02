@@ -4,6 +4,7 @@ import {
   clearServerSession,
   forgetServerConnection,
   getExtensionStorage,
+  saveSelectedModelPreference,
   saveServerConnection
 } from "./storage";
 
@@ -85,6 +86,48 @@ test("saving a second connection for same server preserves existing preferences"
   expect(stored.preferencesByServerId[server.id]).toEqual({
     serverId: server.id,
     selectedModelId: "llama3.1",
+    enabledToolIds: ["web_search"],
+    enabledFeatures: {
+      ...defaultFeatureFlags,
+      web_search: true
+    }
+  });
+});
+
+test("saving selected model preference persists it per server and preserves other preferences", async () => {
+  setChromeStorageData({
+    extensionStorage: {
+      serversById: {
+        [server.id]: server
+      },
+      sessionsByServerId: {
+        [server.id]: session
+      },
+      preferencesByServerId: {
+        [server.id]: {
+          serverId: server.id,
+          selectedModelId: "llama3.1",
+          enabledToolIds: ["web_search"],
+          enabledFeatures: {
+            ...defaultFeatureFlags,
+            web_search: true
+          }
+        }
+      },
+      uiState: {
+        activeServerId: server.id
+      }
+    }
+  });
+
+  const stored = await saveSelectedModelPreference({
+    modelId: "openrouter.anthropic/claude-haiku-4.5",
+    serverId: server.id
+  });
+
+  expect(stored.preferencesByServerId[server.id]).toEqual({
+    serverId: server.id,
+    selectedModelId: "openrouter.anthropic/claude-haiku-4.5",
     enabledToolIds: ["web_search"],
     enabledFeatures: {
       ...defaultFeatureFlags,

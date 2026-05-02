@@ -14,6 +14,11 @@ type SaveServerConnectionInput = {
   session: SessionRecord;
 };
 
+type SaveSelectedModelPreferenceInput = {
+  modelId: string;
+  serverId: string;
+};
+
 const emptyStorage = (): ExtensionStorage => ({
   serversById: {},
   sessionsByServerId: {},
@@ -129,6 +134,27 @@ export const saveServerConnection = async ({
     uiState: {
       ...storage.uiState,
       activeServerId: server.id
+    }
+  };
+
+  return persistExtensionStorage(nextStorage);
+};
+
+export const saveSelectedModelPreference = async ({
+  modelId,
+  serverId
+}: SaveSelectedModelPreferenceInput): Promise<ExtensionStorage> => {
+  const storage = await getExtensionStorage();
+  const currentPreferences =
+    storage.preferencesByServerId[serverId] ?? defaultPreferencesForServer(serverId);
+  const nextStorage: ExtensionStorage = {
+    ...storage,
+    preferencesByServerId: {
+      ...storage.preferencesByServerId,
+      [serverId]: {
+        ...currentPreferences,
+        selectedModelId: modelId
+      }
     }
   };
 

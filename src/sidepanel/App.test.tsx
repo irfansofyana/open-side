@@ -27,7 +27,9 @@ const connectionResult: ConnectToServerResult = {
   },
   models: [
     { id: "llama3.1", name: "Llama 3.1" },
-    { id: "mistral" }
+    { id: "mistral" },
+    { id: "openrouter.anthropic/claude-haiku-4.5", name: "Anthropic: Claude Haiku 4.5" },
+    { id: "kimi-k2.6:cloud", name: "kimi-k2.6:cloud" }
   ]
 };
 
@@ -77,7 +79,7 @@ test("saved session restores ready state without asking for credentials", async 
 
   expect(await screen.findByRole("heading", { name: "Ready" })).toBeInTheDocument();
   expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
-  expect(screen.getByLabelText("Model")).toHaveValue("mistral");
+  expect(screen.getByLabelText(/Model/)).toHaveTextContent("mistral");
 });
 
 test("expired saved session prefills server and email and can forget the saved server", async () => {
@@ -131,8 +133,7 @@ test("successful submit calls connect function with form values and renders read
   });
   expect(await screen.findByRole("heading", { name: "Ready" })).toBeInTheDocument();
   expect(screen.getByText("openwebui.example.com")).toBeInTheDocument();
-  expect(screen.getByRole("option", { name: "Llama 3.1" })).toBeInTheDocument();
-  expect(screen.getByRole("option", { name: "mistral" })).toBeInTheDocument();
+  expect(screen.getByLabelText(/Model/)).toHaveTextContent("Llama 3.1");
   expect(screen.queryByDisplayValue("secret")).not.toBeInTheDocument();
 });
 
@@ -149,7 +150,7 @@ test("ready state uses a focused chat shell with empty prompt shortcuts", async 
   expect(screen.getByRole("region", { name: "Chat session" })).toBeInTheDocument();
   expect(screen.getByRole("log", { name: "Messages" })).toBeInTheDocument();
   expect(screen.getByText("Start a conversation")).toBeInTheDocument();
-  expect(screen.getByLabelText("Model")).toHaveAttribute("title", "Llama 3.1");
+  expect(screen.getByLabelText(/Model/)).toHaveAttribute("title", "Llama 3.1");
 
   fireEvent.click(screen.getByRole("button", { name: "Summarize this page" }));
 
@@ -246,9 +247,8 @@ test("connected user can send a prompt and see streamed assistant text", async (
   );
   expect(await screen.findByText("Second answer")).toBeInTheDocument();
 
-  fireEvent.change(screen.getByLabelText("Model"), {
-    target: { value: "mistral" }
-  });
+  fireEvent.click(screen.getByLabelText(/Model/));
+  fireEvent.click(await screen.findByRole("option", { name: /mistral/ }));
   fireEvent.change(screen.getByLabelText("Message"), {
     target: { value: "Same chat, new model" }
   });
@@ -282,6 +282,106 @@ test("connected user can send a prompt and see streamed assistant text", async (
     })
   );
   expect(await screen.findByText("Fresh answer")).toBeInTheDocument();
+});
+
+test("composer submits with Enter and keeps Shift Enter for multiline prompts", async () => {
+  const connect = vi.fn().mockResolvedValue(connectionResult);
+  const sendMessage = vi.fn(async ({ onContent }) => {
+    onContent("ok");
+    return {
+      assistantText: "ok",
+      chatId: "chat-1",
+      refreshedChat: {
+        id: "chat-1",
+        title: "Active chat",
+        messages: {}
+      }
+    };
+  });
+
+  render(<App connect={connect} restoreConnection={emptyRestore} sendMessage={sendMessage} />);
+
+  fireEvent.change(await screen.findByLabelText("Server URL"), {
+    target: { value: "https://openwebui.example.com" }
+  });
+  fireEvent.change(screen.getByLabelText("Email or username"), {
+    target: { value: "ada@example.com" }
+  });
+  fireEvent.change(screen.getByLabelText("Password"), {
+    target: { value: "secret" }
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+  expect(await screen.findByRole("heading", { name: "Ready" })).toBeInTheDocument();
+
+  const messageInput = screen.getByLabelText("Message");
+  fireEvent.change(messageInput, { target: { value: "Line one" } });
+  fireEvent.keyDown(messageInput, { key: "Enter", shiftKey: true });
+
+  expect(sendMessage).not.toHaveBeenCalled();
+
+  fireEvent.change(messageInput, { target: { value: "Line one\nLine two" } });
+  fireEvent.keyDown(messageInput, { key: "Enter" });
+
+  await waitFor(() => {
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: "Line one\nLine two"
+      })
+    );
+  });
+});
+
+test("model picker searches and selects from a long model list", async () => {
+  const restoreConnection = vi.fn<() => Promise<RestoreSavedConnectionResult>>().mockResolvedValue({
+    status: "ready",
+    connection: connectionResult,
+    selectedModelId: "llama3.1"
+  });
+
+  render(<App restoreConnection={restoreConnection} />);
+
+  expect(await screen.findByRole("heading", { name: "Ready" })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByLabelText(/Model/));
+  fireEvent.change(screen.getByLabelText("Search models"), {
+    target: { value: "haiku" }
+  });
+
+  expect(screen.queryByRole("option", { name: /Llama 3.1/ })).not.toBeInTheDocument();
+  fireEvent.click(
+    await screen.findByRole("option", { name: /Anthropic: Claude Haiku 4.5/ })
+  );
+
+  expect(screen.getByLabelText(/Model/)).toHaveTextContent("Anthropic: Claude Haiku 4.5");
+});
+
+test("model picker selection is saved as the default model for the server", async () => {
+  const restoreConnection = vi.fn<() => Promise<RestoreSavedConnectionResult>>().mockResolvedValue({
+    status: "ready",
+    connection: connectionResult,
+    selectedModelId: "llama3.1"
+  });
+  const saveSelectedModelPreference = vi.fn(async () => undefined);
+
+  render(
+    <App
+      restoreConnection={restoreConnection}
+      saveSelectedModelPreference={saveSelectedModelPreference}
+    />
+  );
+
+  expect(await screen.findByRole("heading", { name: "Ready" })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByLabelText(/Model/));
+  fireEvent.click(await screen.findByRole("option", { name: /kimi-k2.6:cloud/ }));
+
+  await waitFor(() => {
+    expect(saveSelectedModelPreference).toHaveBeenCalledWith(
+      "server-openwebui-example-com",
+      "kimi-k2.6:cloud"
+    );
+  });
 });
 
 test("empty assistant message shows an intentional streaming state", async () => {
