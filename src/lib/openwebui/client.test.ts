@@ -548,6 +548,43 @@ test("completeChat posts caller-provided completion payload", async () => {
   });
 });
 
+test("triggerChatCompletion posts Open WebUI payload and returns JSON without reading a stream", async () => {
+  const responseBody = { task_id: "task-1" };
+  fetchMock.mockResolvedValueOnce(jsonResponse(responseBody));
+
+  const client = new OpenWebUIClient({
+    baseUrl: "https://openwebui.example.com",
+    getToken: () => "token-1"
+  });
+  const payload = {
+    stream: true as const,
+    model: "llama",
+    messages: [{ role: "user", content: "hello" }],
+    features: {
+      web_search: false,
+      image_generation: false,
+      code_interpreter: false,
+      memory: false
+    },
+    params: {},
+    variables: {},
+    metadata: { variables: {} },
+    stream_options: { include_usage: true as const },
+    background_tasks: {},
+    tool_servers: []
+  };
+
+  await expect(client.triggerChatCompletion(payload)).resolves.toEqual(responseBody);
+  expect(fetchMock).toHaveBeenCalledWith("https://openwebui.example.com/api/chat/completions", {
+    body: JSON.stringify(payload),
+    headers: {
+      authorization: "Bearer token-1",
+      "content-type": "application/json"
+    },
+    method: "POST"
+  });
+});
+
 test("streamChatCompletion posts Open WebUI payload and returns response body", async () => {
   const stream = new ReadableStream<Uint8Array>();
   fetchMock.mockResolvedValueOnce(new Response(stream, { status: 200 }));

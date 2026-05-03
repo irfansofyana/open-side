@@ -331,6 +331,19 @@ export class OpenWebUIClient {
     return isRecord(data) ? data : {};
   }
 
+  async triggerChatCompletion(payload: ChatCompletionRequest): Promise<ChatMutationResult> {
+    const data = await this.request("/api/chat/completions", {
+      auth: true,
+      body: JSON.stringify(payload),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+
+    return isRecord(data) ? data : {};
+  }
+
   async streamChatCompletion(
     payload: ChatCompletionRequest
   ): Promise<ReadableStream<Uint8Array>> {

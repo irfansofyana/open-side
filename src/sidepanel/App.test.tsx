@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { App } from "./App";
 import type {
@@ -302,6 +302,64 @@ test("connected user can send a prompt and see streamed assistant text", async (
   expect(await screen.findByText("Fresh answer")).toBeInTheDocument();
 });
 
+test("connected user sees streamed assistant chunks before send completes", async () => {
+  const connect = vi.fn().mockResolvedValue(connectionResult);
+  let emitChunk: ((content: string) => void) | undefined;
+  let finishSend: (() => void) | undefined;
+  const sendFinished = new Promise<void>((resolve) => {
+    finishSend = resolve;
+  });
+  const sendMessage = vi.fn(async ({ onContent }) => {
+    emitChunk = onContent;
+    await sendFinished;
+
+    return {
+      assistantText: "Partial response done",
+      chatId: "chat-1",
+      refreshedChat: {
+        id: "chat-1",
+        title: "Active chat",
+        messages: {}
+      }
+    };
+  });
+
+  render(<App connect={connect} restoreConnection={emptyRestore} sendMessage={sendMessage} />);
+
+  fireEvent.change(await screen.findByLabelText("Server URL"), {
+    target: { value: "https://openwebui.example.com" }
+  });
+  fireEvent.change(screen.getByLabelText("Email or username"), {
+    target: { value: "ada@example.com" }
+  });
+  fireEvent.change(screen.getByLabelText("Password"), {
+    target: { value: "secret" }
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+  expect(await screen.findByRole("heading", { name: "Ready" })).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("Message"), {
+    target: { value: "Stream slowly" }
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+  await waitFor(() => {
+    expect(emitChunk).toBeDefined();
+  });
+  act(() => {
+    emitChunk?.("Partial response");
+  });
+
+  expect(await screen.findByText("Partial response")).toBeInTheDocument();
+  expect(screen.queryByText("Partial response done")).not.toBeInTheDocument();
+
+  await act(async () => {
+    finishSend?.();
+    await sendFinished;
+  });
+  expect(await screen.findByText("Partial response done")).toBeInTheDocument();
+});
+
 test("assistant message labels keep the model used for each response", async () => {
   const connect = vi.fn().mockResolvedValue(connectionResult);
   const sendMessage = vi.fn(async ({ modelId, onContent }) => {
@@ -405,6 +463,73 @@ test("assistant messages render returned citation sources", async () => {
 
   expect(screen.getByRole("heading", { name: "Reuters" })).toBeInTheDocument();
   expect(screen.getByText("Reuters reported the appointment from Jakarta.")).toBeInTheDocument();
+});
+
+test("assistant messages render streamed citation sources before send completes", async () => {
+  const connect = vi.fn().mockResolvedValue(connectionResult);
+  let emitCitation: (() => void) | undefined;
+  let finishSend: (() => void) | undefined;
+  const sendFinished = new Promise<void>((resolve) => {
+    finishSend = resolve;
+  });
+  const sendMessage = vi.fn(async ({ onContent, onEvent }) => {
+    onContent("The minister is Purbaya [1].");
+    emitCitation = () =>
+      onEvent?.({
+        type: "citation",
+        citation: {
+          documents: ["Reuters reported the appointment from Jakarta."],
+          index: 1,
+          metadata: [{ source: "Reuters", url: "https://example.com/reuters" }],
+          name: "Reuters",
+          url: "https://example.com/reuters"
+        }
+      });
+    await sendFinished;
+
+    return {
+      assistantText: "The minister is Purbaya [1].",
+      chatId: "chat-1",
+      refreshedChat: {
+        id: "chat-1",
+        title: "Active chat",
+        messages: {}
+      }
+    };
+  });
+
+  render(<App connect={connect} restoreConnection={emptyRestore} sendMessage={sendMessage} />);
+
+  fireEvent.change(await screen.findByLabelText("Server URL"), {
+    target: { value: "https://openwebui.example.com" }
+  });
+  fireEvent.change(screen.getByLabelText("Email or username"), {
+    target: { value: "ada@example.com" }
+  });
+  fireEvent.change(screen.getByLabelText("Password"), {
+    target: { value: "secret" }
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+  expect(await screen.findByRole("heading", { name: "Ready" })).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("Message"), {
+    target: { value: "Who is the minister?" }
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  expect(await screen.findByText("The minister is Purbaya [1].")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Reuters citation 1" })).not.toBeInTheDocument();
+
+  act(() => {
+    emitCitation?.();
+  });
+
+  expect(await screen.findByRole("button", { name: "Reuters citation 1" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Show 1 Source" })).toBeInTheDocument();
+
+  await act(async () => {
+    finishSend?.();
+    await sendFinished;
+  });
 });
 
 test("composer submits with Enter and keeps Shift Enter for multiline prompts", async () => {

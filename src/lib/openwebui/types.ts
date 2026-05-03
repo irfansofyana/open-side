@@ -215,6 +215,7 @@ export type BuildCompletionPayloadInput = {
 
 export type StreamEvent =
   | { type: "content"; content: string }
+  | { type: "replace"; content: string }
   | { type: "citation"; citation: CitationSource }
   | { type: "reasoning"; content: string }
   | { type: "status"; status: string; raw?: unknown }

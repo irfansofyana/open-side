@@ -26,6 +26,8 @@ import {
   saveSelectedModelPreference as saveSelectedModelPreferenceToStorage
 } from "../lib/chrome/storage";
 import { OpenWebUIClient } from "../lib/openwebui/client";
+import { normalizeCitationSources } from "../lib/openwebui/citations";
+import { OpenWebUIRealtimeClient } from "../lib/openwebui/realtime";
 import type {
   BrowserTabSummary,
   CapturedTabContext,
@@ -34,6 +36,7 @@ import type {
   CitationSource,
   FeatureFlags,
   OpenWebUIModel,
+  StreamEvent,
   ToolMenuItem,
   ToolsSelection
 } from "../lib/openwebui/types";
@@ -50,6 +53,7 @@ import {
   sendPersistedMessage,
   type SendPersistedMessageResult
 } from "../lib/runtime/chatRuntime";
+import { streamDiagnostics } from "../lib/runtime/streamDiagnostics";
 import { injectTabContext } from "../lib/runtime/tabPrompt";
 import {
   buildToolsMenu,
@@ -86,6 +90,7 @@ type AppSendMessageInput = {
   title?: string;
   toolIds: string[];
   onContent: (content: string) => void;
+  onEvent?: (event: StreamEvent) => void;
 };
 
 type AppLoadToolsInput = {
@@ -105,6 +110,8 @@ type ChatMessage = {
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : "Unable to connect";
 
+const isPipeModel = (modelItem: OpenWebUIModel): boolean => modelItem.pipe !== undefined;
+
 const defaultSendMessage = ({
   activeChat,
   connection,
@@ -115,24 +122,34 @@ const defaultSendMessage = ({
   prompt,
   title,
   toolIds,
-  onContent
+  onContent,
+  onEvent
 }: AppSendMessageInput): Promise<SendPersistedMessageResult> => {
   const client = new OpenWebUIClient({
     baseUrl: connection.server.baseUrl,
     getToken: () => connection.session.token
   });
+  const realtimeClient = new OpenWebUIRealtimeClient({
+    baseUrl: connection.server.baseUrl,
+    diagnostics: streamDiagnostics,
+    token: connection.session.token
+  });
 
   return sendPersistedMessage({
     activeChat,
     client,
+    diagnostics: streamDiagnostics,
     features,
     filterIds,
+    isPipeModel: isPipeModel(modelItem),
     modelItem,
     modelId,
     prompt,
+    realtimeClient,
     toolIds,
     title,
-    onContent
+    onContent,
+    onEvent
   });
 };
 
@@ -529,13 +546,36 @@ export function App({
                 : message
             )
           );
+        },
+        onEvent: (streamEvent) => {
+          if (streamEvent.type !== "citation") {
+            return;
+          }
+
+          setChatMessages((messages) =>
+            messages.map((message) =>
+              message.id === assistantId
+                ? {
+                    ...message,
+                    sources: normalizeCitationSources([
+                      ...(message.sources ?? []),
+                      streamEvent.citation
+                    ])
+                  }
+                : message
+            )
+          );
         }
       });
 
       setChatMessages((messages) =>
         messages.map((message) =>
           message.id === assistantId
-            ? { ...message, content: result.assistantText, sources: result.sources }
+            ? {
+                ...message,
+                content: result.assistantText,
+                sources: result.sources ?? message.sources
+              }
             : message
         )
       );

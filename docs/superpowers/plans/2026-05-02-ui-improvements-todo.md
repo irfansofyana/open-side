@@ -26,7 +26,8 @@
 - [x] Render Open WebUI tool-call detail blocks with arguments and results.
 - [x] Render backed Open WebUI citation markers as clickable source references.
 - [x] Add clear streaming state for the active assistant message.
-- [x] Stream persisted polling deltas when direct HTTP stream content is empty.
+- [x] Stream persisted chats through the `/api/chat/completions` response body and Open WebUI Socket.IO events before falling back to polling.
+- [x] Stream persisted polling deltas when live HTTP/Socket.IO content is empty.
 - [ ] Distinguish polling fallback from active token streaming in the UI only if useful for debugging or user trust.
 - [x] Show the model name used for assistant responses instead of a generic assistant label.
 - [x] Improve message spacing, typography, and contrast for long conversations.

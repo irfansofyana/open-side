@@ -17,6 +17,13 @@ const createStream = (chunks: string[]): ReadableStream<Uint8Array> =>
     }
   });
 
+const createPendingStream = (): ReadableStream<Uint8Array> =>
+  new ReadableStream({
+    start() {
+      // Keep the HTTP body open so realtime or polling can win the race.
+    }
+  });
+
 test("sendStreamingMessage builds payload, streams content, and returns assistant text", async () => {
   let sentPayload: ChatCompletionRequest | undefined;
   const client = {
@@ -201,7 +208,7 @@ test("sendPersistedMessage creates linked chat, polls persisted text when stream
     completeChat: vi.fn(async () => ({ ok: true }))
   };
   const contentChunks: string[] = [];
-  const delay = vi.fn(async () => undefined);
+  const delay = vi.fn(async (_ms: number) => undefined);
 
   await expect(
     sendPersistedMessage({
@@ -354,7 +361,7 @@ test("sendPersistedMessage streams persisted polling deltas before completion fi
     completeChat: vi.fn(async () => ({ ok: true }))
   };
   const contentChunks: string[] = [];
-  const delay = vi.fn(async () => undefined);
+  const delay = vi.fn(async (_ms: number) => undefined);
 
   await expect(
     sendPersistedMessage({
@@ -380,6 +387,537 @@ test("sendPersistedMessage streams persisted polling deltas before completion fi
   });
 
   expect(contentChunks).toEqual(["Hello", " streaming", " world"]);
+  expect(delay).toHaveBeenCalledWith(5);
+});
+
+test("sendPersistedMessage streams realtime socket deltas without waiting for the HTTP trigger", async () => {
+  const finalChat: ChatTree = {
+    id: "chat-1",
+    title: "Realtime",
+    currentId: "assistant-1",
+    messages: {
+      "assistant-1": { id: "assistant-1", role: "assistant", content: "Hello world" }
+    }
+  };
+  let realtimeHandler:
+    | ((event: {
+        chat_id?: string;
+        message_id?: string;
+        data?: { type?: string; data?: unknown };
+      }) => void)
+    | undefined;
+  const client = {
+    createChat: vi.fn(async () => ({ id: "chat-1" })),
+    updateChat: vi.fn(async () => ({ id: "chat-1" })),
+    streamChatCompletion: vi.fn(async () => createPendingStream()),
+    triggerChatCompletion: vi.fn(() => new Promise<Record<string, unknown>>(() => undefined)),
+    getChat: vi.fn(async () => finalChat),
+    completeChat: vi.fn(async () => ({ ok: true }))
+  };
+  const realtimeClient = {
+    connect: vi.fn(async () => ({ sessionId: "socket-1" })),
+    disconnect: vi.fn(),
+    onEvent: vi.fn((handler) => {
+      realtimeHandler = handler;
+
+      return vi.fn();
+    })
+  };
+  const contentChunks: string[] = [];
+
+  const sendPromise = sendPersistedMessage({
+    client,
+    idGenerator: vi
+      .fn()
+      .mockReturnValueOnce("user-1")
+      .mockReturnValueOnce("assistant-1")
+      .mockReturnValueOnce("fallback-session-1"),
+    modelId: "openrouter/fast",
+    modelItem: { id: "openrouter/fast", name: "Fast" },
+    now: () => 1714528800000,
+    prompt: "Say hello",
+    realtimeClient,
+    onContent: (content) => contentChunks.push(content)
+  });
+
+  await vi.waitFor(() => {
+    expect(client.streamChatCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({ session_id: "socket-1" })
+    );
+  });
+  expect(client.triggerChatCompletion).not.toHaveBeenCalled();
+  expect(client.streamChatCompletion).toHaveBeenCalledWith(
+    expect.objectContaining({ session_id: "socket-1" })
+  );
+
+  realtimeHandler?.({
+    chat_id: "chat-1",
+    message_id: "assistant-1",
+    data: { type: "chat:message:delta", data: { content: "Hello" } }
+  });
+  expect(contentChunks).toEqual(["Hello"]);
+
+  realtimeHandler?.({
+    chat_id: "chat-1",
+    message_id: "assistant-1",
+    data: { type: "chat:completion", data: { content: "Hello world", done: true } }
+  });
+  expect(contentChunks).toEqual(["Hello", " world"]);
+
+  await expect(sendPromise).resolves.toEqual({
+    assistantText: "Hello world",
+    chatId: "chat-1",
+    refreshedChat: finalChat
+  });
+  expect(realtimeClient.disconnect).toHaveBeenCalled();
+});
+
+test("sendPersistedMessage polls quickly when realtime connects but stays silent", async () => {
+  const firstChat: ChatTree = {
+    id: "chat-1",
+    title: "Realtime fallback",
+    currentId: "assistant-1",
+    messages: {
+      "assistant-1": { id: "assistant-1", role: "assistant", content: "Hello", done: false }
+    }
+  };
+  const secondChat: ChatTree = {
+    id: "chat-1",
+    title: "Realtime fallback",
+    currentId: "assistant-1",
+    messages: {
+      "assistant-1": { id: "assistant-1", role: "assistant", content: "Hello world", done: true }
+    }
+  };
+  const client = {
+    createChat: vi.fn(async () => ({ id: "chat-1" })),
+    updateChat: vi.fn(async () => ({ id: "chat-1" })),
+    streamChatCompletion: vi.fn(async () => createPendingStream()),
+    getChat: vi
+      .fn()
+      .mockResolvedValueOnce(firstChat)
+      .mockResolvedValueOnce(secondChat)
+      .mockResolvedValueOnce(secondChat),
+    completeChat: vi.fn(async () => ({ ok: true }))
+  };
+  const realtimeClient = {
+    connect: vi.fn(async () => ({ sessionId: "socket-1" })),
+    disconnect: vi.fn(),
+    onEvent: vi.fn(() => vi.fn())
+  };
+  const contentChunks: string[] = [];
+  const delay = vi.fn(async (_ms: number) => undefined);
+
+  await expect(
+    sendPersistedMessage({
+      client,
+      delay,
+      idGenerator: vi
+        .fn()
+        .mockReturnValueOnce("user-1")
+        .mockReturnValueOnce("assistant-1")
+        .mockReturnValueOnce("fallback-session-1"),
+      modelId: "openrouter/fast",
+      modelItem: { id: "openrouter/fast", name: "Fast" },
+      now: () => 1714528800000,
+      prompt: "Say hello",
+      realtimeClient,
+      onContent: (content) => contentChunks.push(content)
+    })
+  ).resolves.toEqual({
+    assistantText: "Hello world",
+    chatId: "chat-1",
+    refreshedChat: secondChat
+  });
+
+  expect(delay.mock.calls[0]?.[0]).toBe(750);
+  expect(contentChunks).toEqual(["Hello", " world"]);
+  expect(realtimeClient.disconnect).toHaveBeenCalled();
+});
+
+test("sendPersistedMessage logs when polling becomes the first content source", async () => {
+  const firstChat: ChatTree = {
+    id: "chat-1",
+    title: "Realtime fallback",
+    currentId: "assistant-1",
+    messages: {
+      "assistant-1": { id: "assistant-1", role: "assistant", content: "Hello", done: false }
+    }
+  };
+  const secondChat: ChatTree = {
+    id: "chat-1",
+    title: "Realtime fallback",
+    currentId: "assistant-1",
+    messages: {
+      "assistant-1": { id: "assistant-1", role: "assistant", content: "Hello world", done: true }
+    }
+  };
+  const client = {
+    createChat: vi.fn(async () => ({ id: "chat-1" })),
+    updateChat: vi.fn(async () => ({ id: "chat-1" })),
+    streamChatCompletion: vi.fn(async () => createPendingStream()),
+    getChat: vi
+      .fn()
+      .mockResolvedValueOnce(firstChat)
+      .mockResolvedValueOnce(secondChat)
+      .mockResolvedValueOnce(secondChat),
+    completeChat: vi.fn(async () => ({ ok: true }))
+  };
+  const realtimeClient = {
+    connect: vi.fn(async () => ({ sessionId: "socket-1" })),
+    disconnect: vi.fn(),
+    onEvent: vi.fn(() => vi.fn())
+  };
+  const diagnostics = { log: vi.fn() };
+
+  await sendPersistedMessage({
+    client,
+    delay: vi.fn(async (_ms: number) => undefined),
+    diagnostics,
+    idGenerator: vi
+      .fn()
+      .mockReturnValueOnce("user-1")
+      .mockReturnValueOnce("assistant-1")
+      .mockReturnValueOnce("fallback-session-1"),
+    modelId: "openrouter/fast",
+    modelItem: { id: "openrouter/fast", name: "Fast" },
+    now: () => 1714528800000,
+    prompt: "Say hello",
+    realtimeClient,
+    onContent: vi.fn()
+  });
+
+  expect(diagnostics.log).toHaveBeenCalledWith("chat.send.start", {
+    activeChat: false,
+    modelId: "openrouter/fast",
+    promptLength: 9
+  });
+  expect(diagnostics.log).toHaveBeenCalledWith("chat.completion.request.start", {
+    assistantMessageId: "assistant-1",
+    chatId: "chat-1",
+    modelId: "openrouter/fast",
+    sessionId: "socket-1"
+  });
+  expect(diagnostics.log).toHaveBeenCalledWith("chat.poll.first_content", {
+    assistantMessageId: "assistant-1",
+    attempt: 1,
+    chatId: "chat-1",
+    contentLength: 5
+  });
+  expect(diagnostics.log).toHaveBeenCalledWith("chat.stream.first_text", {
+    source: "poll"
+  });
+  expect(diagnostics.log).toHaveBeenCalledWith("chat.send.done", {
+    assistantChars: 11,
+    chatId: "chat-1",
+    contentSource: "poll"
+  });
+  expect(JSON.stringify(diagnostics.log.mock.calls)).not.toContain("Say hello");
+});
+
+test("sendPersistedMessage streams the completion response body when trigger helper exists", async () => {
+  const emptyChat: ChatTree = {
+    id: "chat-1",
+    title: "HTTP stream",
+    currentId: "assistant-1",
+    messages: {
+      "assistant-1": { id: "assistant-1", role: "assistant", content: "" }
+    }
+  };
+  const client = {
+    createChat: vi.fn(async () => ({ id: "chat-1" })),
+    updateChat: vi.fn(async () => ({ id: "chat-1" })),
+    streamChatCompletion: vi.fn(async () =>
+      createStream([
+        'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n',
+        'data: {"choices":[{"delta":{"content":" live"}}]}\n\n',
+        "data: [DONE]\n\n"
+      ])
+    ),
+    triggerChatCompletion: vi.fn(async () => ({ ok: true })),
+    getChat: vi.fn(async () => emptyChat),
+    completeChat: vi.fn(async () => ({ ok: true }))
+  };
+  const contentChunks: string[] = [];
+
+  await expect(
+    sendPersistedMessage({
+      client,
+      delay: vi.fn(async () => undefined),
+      idGenerator: vi
+        .fn()
+        .mockReturnValueOnce("user-1")
+        .mockReturnValueOnce("assistant-1")
+        .mockReturnValueOnce("fallback-session-1"),
+      modelId: "openrouter/fast",
+      modelItem: { id: "openrouter/fast", name: "Fast" },
+      now: () => 1714528800000,
+      pollIntervalMs: 5,
+      pollMaxAttempts: 1,
+      prompt: "Say hello",
+      onContent: (content) => contentChunks.push(content)
+    })
+  ).resolves.toEqual({
+    assistantText: "Hello live",
+    chatId: "chat-1",
+    refreshedChat: emptyChat
+  });
+
+  expect(client.streamChatCompletion).toHaveBeenCalledWith(
+    expect.objectContaining({ session_id: "fallback-session-1" })
+  );
+  expect(client.triggerChatCompletion).not.toHaveBeenCalled();
+  expect(contentChunks).toEqual(["Hello", " live"]);
+});
+
+test("sendPersistedMessage streams flat realtime socket deltas instead of waiting for polling snapshots", async () => {
+  const finalChat: ChatTree = {
+    id: "chat-1",
+    title: "Realtime",
+    currentId: "assistant-1",
+    messages: {
+      "assistant-1": { id: "assistant-1", role: "assistant", content: "Hello from realtime" }
+    }
+  };
+  let realtimeHandler:
+    | ((event: {
+        chat_id?: string;
+        data?: unknown;
+        message_id?: string;
+        session_id?: string;
+        type?: string;
+      }) => void)
+    | undefined;
+  const client = {
+    createChat: vi.fn(async () => ({ id: "chat-1" })),
+    updateChat: vi.fn(async () => ({ id: "chat-1" })),
+    streamChatCompletion: vi.fn(async () => createPendingStream()),
+    triggerChatCompletion: vi.fn(() => new Promise<Record<string, unknown>>(() => undefined)),
+    getChat: vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: "chat-1",
+        title: "Realtime",
+        messages: {
+          "assistant-1": {
+            id: "assistant-1",
+            role: "assistant",
+            content: "Hello from a polling snapshot that should not replace realtime"
+          }
+        }
+      })
+      .mockResolvedValue(finalChat),
+    completeChat: vi.fn(async () => ({ ok: true }))
+  };
+  const realtimeClient = {
+    connect: vi.fn(async () => ({ sessionId: "socket-1" })),
+    disconnect: vi.fn(),
+    onEvent: vi.fn((handler) => {
+      realtimeHandler = handler;
+
+      return vi.fn();
+    })
+  };
+  const contentChunks: string[] = [];
+  const delayResolvers: Array<() => void> = [];
+  const delay = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        delayResolvers.push(resolve);
+      })
+  );
+
+  const sendPromise = sendPersistedMessage({
+    client,
+    delay,
+    idGenerator: vi
+      .fn()
+      .mockReturnValueOnce("user-1")
+      .mockReturnValueOnce("assistant-1")
+      .mockReturnValueOnce("fallback-session-1"),
+    modelId: "openrouter/fast",
+    modelItem: { id: "openrouter/fast", name: "Fast" },
+    now: () => 1714528800000,
+    pollIntervalMs: 5,
+    pollMaxAttempts: 3,
+    prompt: "Say hello",
+    realtimeClient,
+    onContent: (content) => contentChunks.push(content)
+  });
+
+  await vi.waitFor(() => {
+    expect(client.streamChatCompletion).toHaveBeenCalled();
+  });
+  expect(client.triggerChatCompletion).not.toHaveBeenCalled();
+
+  realtimeHandler?.({
+    chat_id: "chat-1",
+    message_id: "assistant-1",
+    session_id: "socket-1",
+    type: "event:message:delta",
+    data: { content: "Hello" }
+  });
+  expect(contentChunks).toEqual(["Hello"]);
+
+  delayResolvers.shift()?.();
+  await vi.waitFor(() => {
+    expect(client.getChat).toHaveBeenCalledTimes(1);
+  });
+  expect(contentChunks).toEqual(["Hello"]);
+
+  realtimeHandler?.({
+    chat_id: "chat-1",
+    message_id: "assistant-1",
+    session_id: "socket-1",
+    type: "chat:completion",
+    data: { content: "Hello from realtime", done: true }
+  });
+  delayResolvers.shift()?.();
+
+  await expect(sendPromise).resolves.toEqual({
+    assistantText: "Hello from realtime",
+    chatId: "chat-1",
+    refreshedChat: finalChat
+  });
+  expect(contentChunks).toEqual(["Hello", " from realtime"]);
+});
+
+test("sendPersistedMessage accepts realtime events by matching session id even when chat id differs", async () => {
+  const finalChat: ChatTree = {
+    id: "chat-1",
+    title: "Realtime",
+    currentId: "assistant-1",
+    messages: {
+      "assistant-1": { id: "assistant-1", role: "assistant", content: "Session routed" }
+    }
+  };
+  let realtimeHandler:
+    | ((event: {
+        chat_id?: string;
+        data?: unknown;
+        message_id?: string;
+        session_id?: string;
+        type?: string;
+      }) => void)
+    | undefined;
+  const client = {
+    createChat: vi.fn(async () => ({ id: "chat-1" })),
+    updateChat: vi.fn(async () => ({ id: "chat-1" })),
+    streamChatCompletion: vi.fn(async () => createPendingStream()),
+    triggerChatCompletion: vi.fn(() => new Promise<Record<string, unknown>>(() => undefined)),
+    getChat: vi.fn(async () => finalChat),
+    completeChat: vi.fn(async () => ({ ok: true }))
+  };
+  const realtimeClient = {
+    connect: vi.fn(async () => ({ sessionId: "socket-1" })),
+    disconnect: vi.fn(),
+    onEvent: vi.fn((handler) => {
+      realtimeHandler = handler;
+
+      return vi.fn();
+    })
+  };
+  const contentChunks: string[] = [];
+
+  const sendPromise = sendPersistedMessage({
+    client,
+    idGenerator: vi
+      .fn()
+      .mockReturnValueOnce("user-1")
+      .mockReturnValueOnce("assistant-1")
+      .mockReturnValueOnce("fallback-session-1"),
+    modelId: "openrouter/fast",
+    modelItem: { id: "openrouter/fast", name: "Fast" },
+    now: () => 1714528800000,
+    prompt: "Say hello",
+    realtimeClient,
+    onContent: (content) => contentChunks.push(content)
+  });
+
+  await vi.waitFor(() => {
+    expect(client.streamChatCompletion).toHaveBeenCalled();
+  });
+  expect(client.triggerChatCompletion).not.toHaveBeenCalled();
+
+  realtimeHandler?.({
+    chat_id: "local",
+    message_id: "assistant-1",
+    session_id: "socket-1",
+    type: "chat:message:delta",
+    data: { content: "Session" }
+  });
+  realtimeHandler?.({
+    chat_id: "local",
+    message_id: "assistant-1",
+    session_id: "socket-1",
+    type: "chat:completion",
+    data: { content: "Session routed", done: true }
+  });
+
+  await expect(sendPromise).resolves.toEqual({
+    assistantText: "Session routed",
+    chatId: "chat-1",
+    refreshedChat: finalChat
+  });
+  expect(contentChunks).toEqual(["Session", " routed"]);
+});
+
+test("sendPersistedMessage polls persisted content while HTTP trigger is still pending when realtime is unavailable", async () => {
+  const finalChat: ChatTree = {
+    id: "chat-1",
+    title: "Polling",
+    currentId: "assistant-1",
+    messages: {
+      "assistant-1": { id: "assistant-1", role: "assistant", content: "Polled response" }
+    }
+  };
+  const client = {
+    createChat: vi.fn(async () => ({ id: "chat-1" })),
+    updateChat: vi.fn(async () => ({ id: "chat-1" })),
+    streamChatCompletion: vi.fn(async () => createPendingStream()),
+    triggerChatCompletion: vi.fn(() => new Promise<Record<string, unknown>>(() => undefined)),
+    getChat: vi.fn(async () => finalChat),
+    completeChat: vi.fn(async () => ({ ok: true }))
+  };
+  const realtimeClient = {
+    connect: vi.fn(async () => {
+      throw new Error("socket blocked");
+    }),
+    disconnect: vi.fn(),
+    onEvent: vi.fn(() => vi.fn())
+  };
+  const contentChunks: string[] = [];
+  const delay = vi.fn(async () => undefined);
+
+  await expect(
+    sendPersistedMessage({
+      client,
+      delay,
+      idGenerator: vi
+        .fn()
+        .mockReturnValueOnce("user-1")
+        .mockReturnValueOnce("assistant-1")
+        .mockReturnValueOnce("fallback-session-1"),
+      modelId: "openrouter/fast",
+      modelItem: { id: "openrouter/fast", name: "Fast" },
+      now: () => 1714528800000,
+      pollIntervalMs: 5,
+      pollMaxAttempts: 3,
+      prompt: "Say hello",
+      realtimeClient,
+      onContent: (content) => contentChunks.push(content)
+    })
+  ).resolves.toEqual({
+    assistantText: "Polled response",
+    chatId: "chat-1",
+    refreshedChat: finalChat
+  });
+
+  expect(client.streamChatCompletion).toHaveBeenCalledWith(
+    expect.objectContaining({ session_id: "fallback-session-1" })
+  );
+  expect(client.triggerChatCompletion).not.toHaveBeenCalled();
+  expect(contentChunks).toEqual(["Polled response"]);
   expect(delay).toHaveBeenCalledWith(5);
 });
 

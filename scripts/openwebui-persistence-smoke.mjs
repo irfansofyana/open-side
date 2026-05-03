@@ -373,17 +373,19 @@ export function extractContentFromData(data) {
   const content =
     parsed?.choices?.[0]?.delta?.content ??
     parsed?.choices?.[0]?.message?.content ??
+    parsed?.message?.content ??
+    parsed?.response ??
     parsed?.data?.content ??
     parsed?.content ??
     "";
 
   return {
-    done: false,
+    done: parsed?.done === true,
     content: typeof content === "string" ? content : ""
   };
 }
 
-async function readAssistantText(stream, options) {
+export async function readAssistantText(stream, options) {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -406,11 +408,15 @@ async function readAssistantText(stream, options) {
     buffer = lines.pop() ?? "";
 
     for (const line of lines) {
-      if (!line.startsWith("data:")) {
+      const trimmedLine = line.trim();
+      const data = trimmedLine.startsWith("data:")
+        ? trimmedLine.slice(5).trim()
+        : trimmedLine;
+
+      if (!data || (!trimmedLine.startsWith("data:") && !data.startsWith("{") && data !== "[DONE]")) {
         continue;
       }
 
-      const data = line.slice(5).trim();
       diagnostics.dataLines += 1;
       if (diagnostics.previews.length < 5) {
         diagnostics.previews.push(data.slice(0, 240));

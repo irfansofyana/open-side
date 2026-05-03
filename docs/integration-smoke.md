@@ -84,7 +84,7 @@ Known-good result:
 
 ## Persistent Chat Smoke
 
-Run this before wiring persistence into the side panel. It creates a real chat with the linked user message and assistant placeholder required by Open WebUI history, triggers one assistant response, polls the chat when the HTTP stream is empty, calls `/api/chat/completed`, then refetches the chat and confirms the assistant text persisted.
+Run this before wiring persistence into the side panel. It creates a real chat with the linked user message and assistant placeholder required by Open WebUI history, opens `/api/chat/completions` as the assistant response trigger and possible SSE stream, polls the chat when the stream is empty or delayed, calls `/api/chat/completed`, then refetches the chat and confirms the assistant text persisted.
 
 ```bash
 OPENWEBUI_URL=http://localhost:3000 \
@@ -178,12 +178,15 @@ Run this after chat rendering changes.
 7. Confirm fenced code has syntax coloring and stays horizontally scrollable when long.
 8. Send a prompt to a reasoning model, or load a response with `<think>...</think>`, `<reasoning>...</reasoning>`, or `<details type="reasoning">...</details>`.
 9. Confirm thinking content appears in a collapsible reasoning panel while the final answer remains readable.
-10. Send a prompt that takes long enough to respond and confirm the assistant text appears incrementally when stream or persisted polling content is available.
-11. Send or load assistant text containing raw HTML such as `<strong>bold</strong>` and confirm it is not executed as HTML.
-12. Enable web search or a source-returning tool, then ask a current factual question.
-13. Confirm backed citation markers render as compact clickable source references.
-14. Confirm one sources disclosure button appears below the assistant answer.
-15. Confirm clicking the sources button shows/hides the source list, and clicking a source reveals URL/snippet details.
+10. Send a prompt that takes long enough to respond and confirm the assistant text appears incrementally while the request is still running.
+11. In browser devtools, confirm the side panel opens `/api/chat/completions` as a streaming request and establishes a websocket-first Socket.IO connection to `/ws/socket.io` for normal persisted chats.
+12. Confirm token text appears in multiple visible increments for both SSE `data:` streams and Open WebUI JSONL streams such as `{"done":false,"message":{"content":"..."}}`, not as a single full-answer snapshot after server persistence updates.
+13. If Socket.IO cannot connect or stays silent through the server or reverse proxy, confirm HTTP stream chunks still render incrementally when the server returns them, or that the response recovers through the persisted polling fallback while generation is running.
+14. Send or load assistant text containing raw HTML such as `<strong>bold</strong>` and confirm it is not executed as HTML.
+15. Enable web search or a source-returning tool, then ask a current factual question.
+16. Confirm backed citation markers render as compact clickable source references.
+17. Confirm one sources disclosure button appears below the assistant answer.
+18. Confirm clicking the sources button shows/hides the source list, and clicking a source reveals URL/snippet details.
 
 Expected:
 
@@ -194,6 +197,23 @@ Expected:
 - Source lists are collapsed by default and can be expanded without overflowing the side panel.
 - Unrecognized raw HTML is not mounted as DOM.
 - Streaming state looks intentional while waiting for the first assistant content, and content updates incrementally when available.
+
+### Streaming Diagnostics
+
+When streaming looks delayed or blocked, inspect the side panel DevTools console and filter for `[Open WebUI stream]`. The extension logs safe streaming metadata only: model id, chat id, assistant message id, transport/source, event type, content length, and timing-related poll fields. It must not log tokens, passwords, prompt text, assistant text, or captured page text.
+
+The side panel also exposes an in-memory ring buffer for the current session:
+
+```js
+openWebUIStreamDiagnostics.getEntries()
+copy(JSON.stringify(openWebUIStreamDiagnostics.getEntries(), null, 2))
+```
+
+Use the first `chat.stream.first_text` event to identify which path delivered content first:
+
+- `source: "realtime"` means Socket.IO delivered streamed events.
+- `source: "http"` means `/api/chat/completions` returned readable stream events.
+- `source: "poll"` means the UI recovered content from persisted chat polling.
 
 ## Manual Recent Chats Smoke
 

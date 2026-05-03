@@ -330,36 +330,41 @@ There are three viable streaming paths:
 2. direct SSE for pipe/function models or compatible servers
 3. HTTP submit plus polling chat state as fallback
 
-Recommended MVP order:
+Current implementation:
 
-1. Validate direct `fetch()` streaming against `/api/chat/completions` with the target server.
-2. Implement direct `fetch()` streaming if validation returns usable incremental output.
-3. Implement pipe-model special-case payload behavior.
-4. Implement polling recovery by refetching `/api/v1/chats/:id` while a response is active.
-5. Add Socket.IO if direct streaming does not deliver normal-model output, tool status updates, or server-side parity on the target server.
+1. For normal persisted server-side chats, connect to Open WebUI Socket.IO at `/ws/socket.io` with a websocket-first transport like the Open WebUI frontend, fall back to polling plus websocket if websocket setup fails, emit `user-join`, and use the connected socket id as the completion `session_id`.
+2. Subscribe through Socket.IO `onAny` so both Open WebUI wrapper events (`events`, `chat-events`, `events:channel`, `channel-events`) and direct event-name payloads can be handled. Parse both nested and flat Socket.IO payloads for `chat:message:delta`, `event:message:delta`, `message`, `chat:message`, `replace`, `chat:completion`, `citation`, `source`, `status`, and error events.
+3. Submit `/api/chat/completions` with `stream: true`, `chat_id`, assistant message `id`, `session_id`, `parent_id`, and `user_message` so Open WebUI history remains compatible. Keep the response body open and parse any SSE chunks it returns; this request is both the server-side completion trigger and a first-class live stream source.
+4. Realtime event routing should accept events when either the current `session_id` matches or the current `chat_id` matches, mirroring Open Relay's delivery rule and avoiding drops when Open WebUI emits transitional chat ids such as `local`.
+5. Do not wait for the full completion before updating UI. HTTP SSE chunks, Socket.IO events, and recovery polling can all update the assistant message while the completion request is still running. Once HTTP chunks have started, wait for the HTTP `[DONE]` or stream close before finalizing so the extension does not return after only the first token.
+6. For pipe/function models, omit `session_id`, `chat_id`, and `id`, then stream directly from the HTTP response body as SSE.
+7. If Socket.IO is unavailable or silent, still keep the `/api/chat/completions` body reader active and poll `/api/v1/chats/:id` quickly, currently every 750ms, to recover persisted text as it appears. If Socket.IO or HTTP SSE content starts, ignore polling snapshots from other sources so the UI does not dump a full persisted answer over token-level streaming.
 
-Why not Socket.IO first:
+Why Socket.IO remains part of persisted chats:
 
-- it adds dependency and lifecycle complexity inside a side panel
-- MV3 service workers can suspend, so the side panel should own active stream state
-- direct fetch streaming may be enough for many Open WebUI paths, but this must be proven against the target server before relying on it
+- Open WebUI's WebUI-shaped streaming path can consume the upstream stream server-side and emit deltas over Socket.IO rather than returning token deltas over the HTTP response.
+- The request `session_id` must match the active socket id for the side panel to receive those routed events.
+- Direct HTTP streaming works for direct API calls and some persisted-chat server/model paths, but it is not reliable enough as the only persisted-chat UX.
+- Pipe/function models are the exception: they should use direct HTTP SSE with the chat identifiers omitted to avoid Open WebUI's async task queue delay.
 
 Why keep polling recovery in MVP:
 
 - tools can run for a long time
 - server-side content may update even if token streaming is interrupted
-- Open Relay uses polling to recover from socket failures and tool delays
+- Socket.IO can fail behind a reverse proxy, CORS policy, or WebSocket configuration; polling keeps the extension usable.
 
 ### Stream Handling
 
 The stream adapter should parse:
 
 - standard SSE `data:` lines
+- Open WebUI newline-delimited JSON chat chunks such as `{"done":false,"message":{"content":"..."}}`
 - `[DONE]`
 - OpenAI-style `choices[].delta.content`
 - usage chunks when present
 - JSON events with status/source/error data if returned by Open WebUI
 - Open WebUI `citation`/`source` events carrying document snippets, URLs, and metadata
+- Open WebUI Socket.IO wrapper events with nested `event.data.type` / `event.data.data` payloads, flat `event.type` / `event.data` payloads, or direct Socket.IO event names that need to be wrapped into `{ type, data }`
 
 The UI should support:
 
@@ -369,6 +374,8 @@ The UI should support:
 - clickable source references for backed `[n]` markers
 - error attached to the active assistant message
 - stop/cancel if task id is available
+
+Streaming diagnostics should log safe metadata for transport debugging, not content. The side panel logger writes `[Open WebUI stream]` console entries plus an in-memory ring buffer exposed as `openWebUIStreamDiagnostics`. Allowed fields include model id, chat id, assistant message id, session id, transport/source, stream event type, content length, polling attempt, and timing/retry state. Forbidden fields include tokens, passwords, prompt text, assistant text, captured page text, request bodies, and authorization headers.
 
 ## Chat Finalization
 

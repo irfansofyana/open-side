@@ -9,6 +9,7 @@ import {
   fetchModelItem,
   findPersistedAssistantText,
   pollPersistedAssistantText,
+  readAssistantText,
   selectAssistantText
 } from "./openwebui-persistence-smoke.mjs";
 
@@ -382,6 +383,42 @@ describe("openwebui persistence smoke payloads", () => {
     expect(
       extractContentFromData('{"type":"message","data":{"content":"message chunk"}}')
     ).toEqual({ done: false, content: "message chunk" });
+  });
+
+  test("extractContentFromData reads Open WebUI JSONL stream chunks", () => {
+    expect(
+      extractContentFromData('{"done":false,"message":{"content":"jsonl chunk"}}')
+    ).toEqual({ done: false, content: "jsonl chunk" });
+    expect(extractContentFromData('{"done":true,"total_duration":123}')).toEqual({
+      done: true,
+      content: ""
+    });
+  });
+
+  test("readAssistantText reads Open WebUI JSONL stream chunks", async () => {
+    const stream = new ReadableStream({
+      start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(encoder.encode('{"done":false,"message":{"content":"jsonl"}}\n'));
+        controller.enqueue(encoder.encode('{"done":false,"message":{"content":" smoke"}}\n'));
+        controller.enqueue(encoder.encode('{"done":true}\n'));
+        controller.close();
+      }
+    });
+
+    await expect(readAssistantText(stream, { maxCharacters: 100 })).resolves.toEqual({
+      text: "jsonl smoke",
+      diagnostics: {
+        dataLines: 3,
+        doneSeen: true,
+        emptyContentEvents: 0,
+        previews: [
+          '{"done":false,"message":{"content":"jsonl"}}',
+          '{"done":false,"message":{"content":" smoke"}}',
+          '{"done":true}'
+        ]
+      }
+    });
   });
 
   test("selectAssistantText falls back to persisted chat content and reports stream diagnostics", () => {
