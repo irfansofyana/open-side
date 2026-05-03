@@ -28,6 +28,7 @@ import {
 import { OpenWebUIClient } from "../lib/openwebui/client";
 import { normalizeCitationSources } from "../lib/openwebui/citations";
 import { OpenWebUIRealtimeClient } from "../lib/openwebui/realtime";
+import { isOpenWebUINativeFunctionCallingModel } from "../lib/openwebui/requestBuilders";
 import type {
   BrowserTabSummary,
   CapturedTabContext,
@@ -72,6 +73,7 @@ type AppProps = {
   }) => Promise<ConnectToServerResult>;
   forgetSavedServer?: (serverId: string) => Promise<unknown>;
   loadChat?: (connection: ConnectToServerResult, chatId: string) => Promise<LoadChatForDisplayResult>;
+  loadModelDetail?: (input: AppLoadModelDetailInput) => Promise<OpenWebUIModel>;
   loadTools?: (input: AppLoadToolsInput) => Promise<ToolMenuItem[]>;
   listTabs?: () => Promise<BrowserTabSummary[]>;
   loadRecentChats?: (connection: ConnectToServerResult) => Promise<ChatSummary[]>;
@@ -99,6 +101,12 @@ type AppLoadToolsInput = {
   modelItem: OpenWebUIModel;
 };
 
+type AppLoadModelDetailInput = {
+  connection: ConnectToServerResult;
+  modelId: string;
+  modelItem: OpenWebUIModel;
+};
+
 type ChatMessage = {
   id: string;
   modelId?: string;
@@ -116,12 +124,14 @@ const isPipeModel = (modelItem: OpenWebUIModel): boolean => modelItem.pipe !== u
 export const shouldUseManagedOpenWebUIPath = ({
   features,
   filterIds,
+  modelItem,
   toolIds
 }: Pick<AppSendMessageInput, "features" | "filterIds" | "toolIds"> & {
   modelItem?: OpenWebUIModel;
 }): boolean =>
   toolIds.length > 0 ||
   filterIds.length > 0 ||
+  isOpenWebUINativeFunctionCallingModel(modelItem) ||
   Object.values(features).some(Boolean);
 
 const defaultSendMessage = ({
@@ -351,6 +361,28 @@ const defaultLoadChat = (
     client: createClient(connection)
   });
 
+const defaultLoadModelDetail = async ({
+  connection,
+  modelId,
+  modelItem
+}: AppLoadModelDetailInput): Promise<OpenWebUIModel> => {
+  try {
+    const detail = await createClient(connection).getModelDetail(modelId);
+
+    return {
+      ...modelItem,
+      ...detail,
+      id: detail.id || modelItem.id
+    };
+  } catch {
+    return modelItem;
+  }
+};
+
+const passthroughLoadModelDetail = async ({
+  modelItem
+}: AppLoadModelDetailInput): Promise<OpenWebUIModel> => modelItem;
+
 const defaultLoadTools = async ({
   connection,
   modelItem
@@ -384,6 +416,7 @@ export function App({
   connect = connectToServer,
   forgetSavedServer = forgetServerConnection,
   loadChat = defaultLoadChat,
+  loadModelDetail,
   loadTools = defaultLoadTools,
   listTabs = listCurrentWindowTabs,
   loadRecentChats = defaultLoadRecentChats,
@@ -417,6 +450,8 @@ export function App({
   const [toolMenuItems, setToolMenuItems] = useState<ToolMenuItem[]>([]);
   const [enabledToolItemIds, setEnabledToolItemIds] = useState<Set<string>>(() => new Set());
   const [disabledToolItemIds, setDisabledToolItemIds] = useState<Set<string>>(() => new Set());
+  const loadSelectedModelDetail =
+    loadModelDetail ?? (sendMessage === defaultSendMessage ? defaultLoadModelDetail : passthroughLoadModelDetail);
   const activeToolItems = useMemo(
     () =>
       resolveActiveToolItems({
@@ -537,9 +572,9 @@ export function App({
       tabs: selectedTabs
     });
     const assistantId = `assistant-${Date.now()}`;
-    const modelItem =
+    const baseModelItem =
       connection.models.find((model) => model.id === selectedModelId) ?? { id: selectedModelId };
-    const modelName = getModelLabel(modelItem, selectedModelId);
+    const modelName = getModelLabel(baseModelItem, selectedModelId);
     const selectedTools = toolsSelection;
 
     setPrompt("");
@@ -558,6 +593,18 @@ export function App({
     ]);
 
     try {
+      let modelItem = baseModelItem;
+
+      try {
+        modelItem = await loadSelectedModelDetail({
+          connection,
+          modelId: selectedModelId,
+          modelItem: baseModelItem
+        });
+      } catch {
+        modelItem = baseModelItem;
+      }
+
       const result = await sendMessage({
         activeChat,
         connection,

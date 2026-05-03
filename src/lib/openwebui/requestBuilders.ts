@@ -70,19 +70,38 @@ export function buildOpenWebUIPromptVariables({
   };
 }
 
-const getFunctionCallingMode = (modelItem: Record<string, unknown> | undefined): unknown => {
-  const info = typeof modelItem?.info === "object" && modelItem.info !== null ? modelItem.info : undefined;
-  const params =
-    typeof info === "object" &&
-    info !== null &&
-    "params" in info &&
-    typeof info.params === "object" &&
-    info.params !== null
-      ? info.params
-      : undefined;
+const getNestedRecord = (
+  value: Record<string, unknown> | undefined,
+  key: string
+): Record<string, unknown> | undefined => {
+  if (!value) {
+    return undefined;
+  }
+
+  const nested = value[key];
+
+  return typeof nested === "object" && nested !== null && !Array.isArray(nested)
+    ? (nested as Record<string, unknown>)
+    : undefined;
+};
+
+export const getOpenWebUIFunctionCallingMode = (
+  modelItem: Record<string, unknown> | undefined
+): unknown => {
+  const topLevelParams = getNestedRecord(modelItem, "params");
+  const info = getNestedRecord(modelItem, "info");
+  const params = getNestedRecord(info, "params");
+
+  if (topLevelParams && "function_calling" in topLevelParams) {
+    return topLevelParams.function_calling;
+  }
 
   return params && "function_calling" in params ? params.function_calling : undefined;
 };
+
+export const isOpenWebUINativeFunctionCallingModel = (
+  modelItem: Record<string, unknown> | undefined
+): boolean => getOpenWebUIFunctionCallingMode(modelItem) === "native";
 
 export function buildCompletionPayload(
   input: BuildCompletionPayloadInput
@@ -94,7 +113,11 @@ export function buildCompletionPayload(
   };
   const toolServers = input.toolServers ?? [];
   const files = input.files ?? [];
-  const functionCalling = getFunctionCallingMode(input.modelItem);
+  const functionCalling = getOpenWebUIFunctionCallingMode(input.modelItem);
+  const params = {
+    ...(functionCalling !== undefined ? { function_calling: functionCalling } : {}),
+    ...(input.params ?? {})
+  };
   const payload: ChatCompletionRequest = {
     stream: true,
     model: input.modelId,
@@ -103,7 +126,7 @@ export function buildCompletionPayload(
     user_message: input.userMessage,
     model_item: input.modelItem,
     features,
-    params: input.params ?? {},
+    params,
     variables,
     metadata: {
       ...(input.chatId ? { chat_id: input.chatId } : {}),

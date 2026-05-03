@@ -92,6 +92,21 @@ test("Open WebUI managed path is selected for explicit server-side tools and fea
       toolIds: []
     })
   ).toBe(false);
+  expect(
+    shouldUseManagedOpenWebUIPath({
+      features: { ...defaultFeatureFlags },
+      filterIds: [],
+      modelItem: {
+        id: "minimax-m2.7:cloud",
+        info: {
+          params: {
+            function_calling: "native"
+          }
+        }
+      },
+      toolIds: []
+    })
+  ).toBe(true);
 });
 
 test("default connection form renders", async () => {
@@ -1008,6 +1023,76 @@ test("connected user does not send model available tools unless selected", async
     );
   });
   expect(loadTools).not.toHaveBeenCalled();
+});
+
+test("connected user sends detailed native model config even when model list item is thin", async () => {
+  const nativeConnection: ConnectToServerResult = {
+    ...connectionResult,
+    models: [{ id: "minimax-m2.7:cloud", name: "minimax-m2.7:cloud" }]
+  };
+  const restoreConnection = vi.fn<() => Promise<RestoreSavedConnectionResult>>().mockResolvedValue({
+    status: "ready",
+    connection: nativeConnection,
+    selectedModelId: "minimax-m2.7:cloud"
+  });
+  const loadModelDetail = vi.fn(async () => ({
+    id: "minimax-m2.7:cloud",
+    name: "minimax-m2.7:cloud",
+    info: {
+      params: {
+        function_calling: "native"
+      }
+    }
+  }));
+  const sendMessage = vi.fn(async ({ onContent }) => {
+    onContent("date ok");
+    return {
+      assistantText: "date ok",
+      chatId: "chat-native",
+      refreshedChat: {
+        id: "chat-native",
+        title: "Native chat",
+        messages: {}
+      }
+    };
+  });
+
+  render(
+    <App
+      loadModelDetail={loadModelDetail}
+      restoreConnection={restoreConnection}
+      sendMessage={sendMessage}
+    />
+  );
+
+  expect(await screen.findByRole("heading", { name: "Ready" })).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Message"), {
+    target: { value: "tgl berapa hari ini? pake get_current_timestamp tool" }
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+  await waitFor(() => {
+    expect(loadModelDetail).toHaveBeenCalledWith({
+      connection: nativeConnection,
+      modelId: "minimax-m2.7:cloud",
+      modelItem: { id: "minimax-m2.7:cloud", name: "minimax-m2.7:cloud" }
+    });
+  });
+  await waitFor(() => {
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelItem: expect.objectContaining({
+          id: "minimax-m2.7:cloud",
+          info: {
+            params: {
+              function_calling: "native"
+            }
+          }
+        }),
+        toolIds: []
+      })
+    );
+  });
 });
 
 test("default tools loader includes web search when Open WebUI config enables it", async () => {

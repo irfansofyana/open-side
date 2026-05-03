@@ -188,8 +188,9 @@ Run this after chat rendering changes.
 17. Confirm backed citation markers render as compact clickable source references.
 18. Confirm one sources disclosure button appears below the assistant answer.
 19. Confirm clicking the sources button shows/hides the source list, and clicking a source reveals URL/snippet details.
-20. Without opening the tools picker, ask a model that advertises timestamp or web tools a normal question.
-21. Confirm the request does not include `tool_ids` unless you explicitly selected a tool, and that the payload still includes WebUI current-date/current-time prompt variables.
+20. Without opening the tools picker, ask a native/agentic model a question that can use a built-in tool, such as "tgl berapa hari ini? pake get_current_timestamp tool".
+21. Confirm the extension fetches `/api/v1/models/model?id=...` before send when model detail is available.
+22. Confirm the request uses the managed Open WebUI path with `chat_id`, assistant `id`, and `session_id`, sends `params.function_calling: "native"` when the model advertises it, does not include `tool_ids` unless you explicitly selected a tool, and still includes WebUI current-date/current-time prompt variables.
 
 Expected:
 

@@ -94,6 +94,24 @@ test("buildCompletionPayload keeps variables shared with metadata", () => {
   expect(payload.metadata.variables).toBe(variables);
 });
 
+test("buildCompletionPayload preserves native function calling mode in params and metadata", () => {
+  const payload = buildCompletionPayload({
+    modelId: "minimax-m2.7:cloud",
+    messages: [{ role: "user", content: "hari ini tanggal berapa" }],
+    modelItem: {
+      id: "minimax-m2.7:cloud",
+      info: {
+        params: {
+          function_calling: "native"
+        }
+      }
+    }
+  });
+
+  expect(payload.params).toEqual({ function_calling: "native" });
+  expect(payload.metadata.function_calling).toBe("native");
+});
+
 test("buildOpenWebUIPromptVariables creates current date variables in the user timezone", () => {
   expect(
     buildOpenWebUIPromptVariables({
