@@ -61,6 +61,25 @@ test("readStreamEvents reads split Open WebUI JSONL chunks", async () => {
   ]);
 });
 
+test("readStreamEvents throws when the stream stalls after partial output", async () => {
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(
+        new TextEncoder().encode('data: {"choices":[{"delta":{"content":"Thinking"}}]}\n\n')
+      );
+    }
+  });
+  const events: unknown[] = [];
+  const iterator = readStreamEvents(stream, {
+    idleTimeoutMs: 5,
+    timeoutMessage: "stream stalled"
+  });
+
+  events.push((await iterator.next()).value);
+  await expect(iterator.next()).rejects.toThrow("stream stalled");
+  expect(events).toEqual([{ type: "content", content: "Thinking" }]);
+});
+
 test("parseOpenWebUIRealtimeEvent extracts socket message deltas", () => {
   expect(
     parseOpenWebUIRealtimeEvent({

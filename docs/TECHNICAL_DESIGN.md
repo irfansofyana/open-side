@@ -310,7 +310,8 @@ Important compatibility rules:
 - include `model_item` when available
 - include `user_message` when sending a user prompt into a server-side chat
 - include `tool_ids` only when selected tools exist
-- include `filter_ids` from model/global filter resolution
+- include `filter_ids` only for active toggle filters selected by the user or enabled by explicit filter defaults
+- include native WebUI metadata such as `interface: "open-webui"`, `type: "user_response"`, `features`, `tool_ids`, `tool_servers`, and current prompt variables
 
 ### Pipe/Function Models
 
@@ -326,26 +327,35 @@ This should be implemented behind a `buildCompletionPayload()` function so UI co
 
 There are three viable streaming paths:
 
-1. Socket.IO web-client-compatible path
-2. direct SSE for pipe/function models or compatible servers
+1. direct HTTP streaming through `/api/chat/completions`
+2. Socket.IO web-client-compatible managed chat path
 3. HTTP submit plus polling chat state as fallback
 
 Current implementation:
 
-1. For normal persisted server-side chats, connect to Open WebUI Socket.IO at `/ws/socket.io` with a websocket-first transport like the Open WebUI frontend, fall back to polling plus websocket if websocket setup fails, emit `user-join`, and use the connected socket id as the completion `session_id`.
-2. Subscribe through Socket.IO `onAny` so both Open WebUI wrapper events (`events`, `chat-events`, `events:channel`, `channel-events`) and direct event-name payloads can be handled. Parse both nested and flat Socket.IO payloads for `chat:message:delta`, `event:message:delta`, `message`, `chat:message`, `replace`, `chat:completion`, `citation`, `source`, `status`, and error events.
-3. Submit `/api/chat/completions` with `stream: true`, `chat_id`, assistant message `id`, `session_id`, `parent_id`, and `user_message` so Open WebUI history remains compatible. Keep the response body open and parse any SSE chunks it returns; this request is both the server-side completion trigger and a first-class live stream source.
-4. Realtime event routing should accept events when either the current `session_id` matches or the current `chat_id` matches, mirroring Open Relay's delivery rule and avoiding drops when Open WebUI emits transitional chat ids such as `local`.
-5. Do not wait for the full completion before updating UI. HTTP SSE chunks, Socket.IO events, and recovery polling can all update the assistant message while the completion request is still running. Once HTTP chunks have started, wait for the HTTP `[DONE]` or stream close before finalizing so the extension does not return after only the first token.
-6. For pipe/function models, omit `session_id`, `chat_id`, and `id`, then stream directly from the HTTP response body as SSE.
-7. If Socket.IO is unavailable or silent, still keep the `/api/chat/completions` body reader active and poll `/api/v1/chats/:id` quickly, currently every 750ms, to recover persisted text as it appears. If Socket.IO or HTTP SSE content starts, ignore polling snapshots from other sources so the UI does not dump a full persisted answer over token-level streaming.
+1. Plain chat sends stream directly from `/api/chat/completions` with `stream: true`, `model`, `messages`, variables, params, and `model_item`, while intentionally omitting `chat_id`, assistant message `id`, and `session_id`. This avoids Open WebUI's WebUI-managed path where the server can consume the upstream stream and route live deltas only over Socket.IO.
+2. When the user explicitly enables tools, filters, or built-in features such as web search, route the send through the WebUI-managed runtime instead of direct mode. Server-side tools and knowledge flows may depend on `chat_id`, assistant message `id`, `session_id`, and persisted chat state while generation is still running.
+3. While any HTTP response body is open, parse SSE, JSONL, reasoning, citation/source, status, usage, error, and `[DONE]` events and append assistant text immediately.
+4. The direct stream reader uses an idle timeout so a half-open stream that emitted thinking/tool preamble but stopped producing bytes cannot leave the side panel stuck in a sending state.
+5. After the direct stream finishes, persist the final user/assistant pair to Open WebUI history with `/api/v1/chats/new` for new chats or `POST /api/v1/chats/:id` for continuations, then call `/api/chat/completed` and refetch `/api/v1/chats/:id`.
+6. Keep the WebUI-managed runtime available as a compatibility path. In that mode, connect to Socket.IO at `/ws/socket.io`, emit `user-join`, use the connected socket id as `session_id`, send `chat_id`, assistant `id`, `parent_id`, and `user_message`, and recover through polling if Socket.IO is unavailable or silent.
+7. Realtime event routing in WebUI-managed mode should accept events when either the current `session_id` matches or the current `chat_id` matches, mirroring Open Relay's delivery rule and avoiding drops when Open WebUI emits transitional chat ids such as `local`.
+8. Do not wait for full completion before updating UI in either mode. Direct HTTP chunks, WebUI-managed HTTP/Socket.IO chunks, and recovery polling can all update the assistant message while generation is still running.
+9. For active tools/features, persisted chat is the answer source of truth. HTTP or realtime text preambles such as "I'll search..." are ignored for the displayed answer, while citation/status events can still be consumed. This handles tool flows where Open WebUI writes the final tool-backed answer into chat history while the HTTP body remains open or quiet.
+10. Reasoning-only chunks and persisted reasoning-only snapshots render as progress but do not count as final assistant answer text. If a stream or poll only has thinking without answer content, the runtime continues persisted-chat recovery before finalizing.
+11. On the plain direct path, if the model returns non-empty reasoning but never emits final answer tokens, preserve and persist the reasoning-only output instead of showing a generic no-content failure. This is a partial model response, not a synthesized answer.
 
-Why Socket.IO remains part of persisted chats:
+Why direct HTTP streaming is the default:
+
+- It gives the side panel a deterministic token path controlled by the extension.
+- It avoids depending on Socket.IO and reverse-proxy WebSocket correctness for the first visible assistant text.
+- It preserves Open WebUI history after completion rather than before generation.
+
+Why Socket.IO remains available:
 
 - Open WebUI's WebUI-shaped streaming path can consume the upstream stream server-side and emit deltas over Socket.IO rather than returning token deltas over the HTTP response.
 - The request `session_id` must match the active socket id for the side panel to receive those routed events.
-- Direct HTTP streaming works for direct API calls and some persisted-chat server/model paths, but it is not reliable enough as the only persisted-chat UX.
-- Pipe/function models are the exception: they should use direct HTTP SSE with the chat identifiers omitted to avoid Open WebUI's async task queue delay.
+- Server-side tools, filters, built-in features, and WebUI-specific behaviors may only be fully represented through the managed event path.
 
 Why keep polling recovery in MVP:
 
@@ -397,7 +407,7 @@ Discovery sources:
 
 - `GET /api/v1/tools/list` for normal workspace tools, with `GET /api/v1/tools/` as a compatibility fallback if needed
 - `GET /api/v1/functions/` for action/filter functions
-- selected model full config for model-assigned tool ids, default features, capabilities, and function-calling mode
+- selected model full config for available model-assigned tool ids, default features, capabilities, and function-calling mode
 
 Tool state sources:
 
@@ -405,7 +415,7 @@ Tool state sources:
 - built-in `features`
 - model default feature ids
 - model capabilities
-- global active tools
+- global active tools as available menu items, not automatically active `tool_ids`
 - filter ids
 
 The API client should normalize tool/function records into a shared UI shape:
@@ -436,8 +446,8 @@ Rules:
 - server/model/user availability controls whether a toggle appears
 - switching model resets defaults to that model
 - manual user toggles must not be overwritten before send
-- globally enabled tools should appear selected by default unless user disabled them
-- model-assigned tools should appear selected by default unless user disabled them
+- globally enabled tools should appear as selectable menu items, but should not be sent unless selected
+- model-assigned tools should appear as selectable menu items, but should not be sent unless selected
 - selected custom tools are sent as `tool_ids`
 - enabled built-in tools are sent in `features`
 - active filter functions are sent as `filter_ids`
@@ -652,7 +662,7 @@ Manual Chrome tests:
 - side panel opens
 - login against target Open WebUI server
 - recent chats menu loads
-- model switch updates defaults
+- model switch resets tool selections and updates available defaults
 - model switch during an active chat keeps the same chat id
 - follow-up sends update the same active chat id
 - New chat clears the active chat and creates a separate server-side chat on the next send

@@ -1,13 +1,14 @@
 import "@testing-library/jest-dom/vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
-import { App } from "./App";
+import { App, shouldUseManagedOpenWebUIPath } from "./App";
 import type {
   BrowserTabSummary,
   CapturedTabContext,
   ChatSummary,
   ToolMenuItem
 } from "../lib/openwebui/types";
+import { defaultFeatureFlags } from "../lib/openwebui/types";
 import type {
   ConnectToServerResult,
   RestoreSavedConnectionResult
@@ -50,6 +51,48 @@ const jsonResponse = (body: unknown, init: ResponseInit = {}): Response =>
     },
     ...init
   });
+
+test("Open WebUI managed path is selected for explicit server-side tools and features", () => {
+  expect(
+    shouldUseManagedOpenWebUIPath({
+      features: { ...defaultFeatureFlags },
+      filterIds: [],
+      toolIds: []
+    })
+  ).toBe(false);
+  expect(
+    shouldUseManagedOpenWebUIPath({
+      features: { ...defaultFeatureFlags },
+      filterIds: [],
+      toolIds: ["search_web"]
+    })
+  ).toBe(true);
+  expect(
+    shouldUseManagedOpenWebUIPath({
+      features: { ...defaultFeatureFlags },
+      filterIds: ["knowledge-base-filter"],
+      toolIds: []
+    })
+  ).toBe(true);
+  expect(
+    shouldUseManagedOpenWebUIPath({
+      features: { ...defaultFeatureFlags, web_search: true },
+      filterIds: [],
+      toolIds: []
+    })
+  ).toBe(true);
+  expect(
+    shouldUseManagedOpenWebUIPath({
+      features: { ...defaultFeatureFlags },
+      filterIds: [],
+      modelItem: {
+        id: "minimax-m2.7:cloud",
+        meta: { toolIds: ["get_current_timestamp"] }
+      },
+      toolIds: []
+    })
+  ).toBe(false);
+});
 
 test("default connection form renders", async () => {
   render(<App />);
@@ -358,6 +401,39 @@ test("connected user sees streamed assistant chunks before send completes", asyn
     await sendFinished;
   });
   expect(await screen.findByText("Partial response done")).toBeInTheDocument();
+});
+
+test("stream failure after partial content preserves the partial assistant response", async () => {
+  const connect = vi.fn().mockResolvedValue(connectionResult);
+  const sendMessage = vi.fn(async ({ onContent }) => {
+    onContent("Let me check if there's any relevant information.");
+    throw new Error("Open WebUI direct stream stalled");
+  });
+
+  render(<App connect={connect} restoreConnection={emptyRestore} sendMessage={sendMessage} />);
+
+  fireEvent.change(await screen.findByLabelText("Server URL"), {
+    target: { value: "https://openwebui.example.com" }
+  });
+  fireEvent.change(screen.getByLabelText("Email or username"), {
+    target: { value: "ada@example.com" }
+  });
+  fireEvent.change(screen.getByLabelText("Password"), {
+    target: { value: "secret" }
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+  expect(await screen.findByRole("heading", { name: "Ready" })).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("Message"), {
+    target: { value: "who is soekarno" }
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+  expect(
+    await screen.findByText("Let me check if there's any relevant information.")
+  ).toBeInTheDocument();
+  expect(await screen.findByRole("alert")).toHaveTextContent("Open WebUI direct stream stalled");
+  expect(screen.queryByText("Llama 3.1 is responding")).not.toBeInTheDocument();
 });
 
 test("assistant message labels keep the model used for each response", async () => {
@@ -880,6 +956,58 @@ test("connected user can enable tools and feature toggles for the next chat requ
       })
     );
   });
+});
+
+test("connected user does not send model available tools unless selected", async () => {
+  const restoreConnection = vi.fn<() => Promise<RestoreSavedConnectionResult>>().mockResolvedValue({
+    status: "ready",
+    connection: connectionResult,
+    selectedModelId: "llama3.1"
+  });
+  const loadTools = vi.fn(async () => [
+    {
+      id: "get_current_timestamp",
+      name: "Current timestamp",
+      kind: "tool" as const,
+      isEnabledByDefault: false
+    }
+  ]);
+  const sendMessage = vi.fn(async ({ onContent }) => {
+    onContent("date ok");
+    return {
+      assistantText: "date ok",
+      chatId: "chat-tools",
+      refreshedChat: {
+        id: "chat-tools",
+        title: "Tool chat",
+        messages: {}
+      }
+    };
+  });
+
+  render(
+    <App
+      loadTools={loadTools}
+      restoreConnection={restoreConnection}
+      sendMessage={sendMessage}
+    />
+  );
+
+  expect(await screen.findByRole("heading", { name: "Ready" })).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Message"), {
+    target: { value: "hari ini tanggal berapa" }
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+  await waitFor(() => {
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: "hari ini tanggal berapa",
+        toolIds: []
+      })
+    );
+  });
+  expect(loadTools).not.toHaveBeenCalled();
 });
 
 test("default tools loader includes web search when Open WebUI config enables it", async () => {

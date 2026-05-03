@@ -68,6 +68,28 @@ const getNestedRecord = (
   key: string
 ): Record<string, unknown> | undefined => (isRecord(value[key]) ? value[key] : undefined);
 
+const uniqueStrings = (values: string[]): string[] => [...new Set(values)];
+
+export const resolveModelToolIds = (modelItem?: OpenWebUIModel): string[] => {
+  if (!modelItem) {
+    return [];
+  }
+
+  const meta = getModelMeta(modelItem);
+  const info = isRecord(modelItem.info) ? modelItem.info : undefined;
+  const infoMeta = info ? getNestedRecord(info, "meta") : undefined;
+  const records = [modelItem, meta, info, infoMeta].filter(isRecord);
+
+  return uniqueStrings(
+    records.flatMap((record) => [
+      ...getStringArray(record.toolIds),
+      ...getStringArray(record.tool_ids),
+      ...getStringArray(record.defaultToolIds),
+      ...getStringArray(record.default_tool_ids)
+    ])
+  );
+};
+
 const featureConfigKeys: Record<FeatureKey, string[]> = {
   web_search: ["enable_web_search", "web_search"],
   image_generation: ["enable_image_generation", "image_generation"],
@@ -97,11 +119,6 @@ const findBoolean = (
 };
 
 const isToolActive = (tool: OpenWebUITool): boolean => tool.raw.is_active !== false;
-
-const isToolEnabledByDefault = (
-  tool: OpenWebUITool,
-  modelToolIds: Set<string>
-): boolean => tool.raw.is_global === true || modelToolIds.has(tool.id);
 
 const isToggleableFilter = (fn: OpenWebUIFunction): boolean => {
   const meta = isRecord(fn.raw.meta) ? fn.raw.meta : {};
@@ -175,10 +192,6 @@ export function buildToolsMenu({
   tools
 }: BuildToolsMenuInput): ToolMenuItem[] {
   const meta = getModelMeta(modelItem);
-  const modelToolIds = new Set([
-    ...getStringArray(meta.toolIds),
-    ...getStringArray(meta.tool_ids)
-  ]);
   const defaultFilterIds = new Set([
     ...getStringArray(meta.defaultFilterIds),
     ...getStringArray(meta.default_filter_ids)
@@ -210,7 +223,7 @@ export function buildToolsMenu({
       name: tool.name,
       description: tool.description,
       kind: "tool",
-      isEnabledByDefault: isToolEnabledByDefault(tool, modelToolIds)
+      isEnabledByDefault: false
     }));
   const filterItems = functions
     .filter((fn) => fn.isActive && isToggleableFilter(fn))

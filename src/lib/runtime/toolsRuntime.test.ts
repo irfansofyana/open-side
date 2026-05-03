@@ -1,4 +1,9 @@
-import { buildToolsMenu, resolveAvailableFeatures, resolveToolsSelection } from "./toolsRuntime";
+import {
+  buildToolsMenu,
+  resolveAvailableFeatures,
+  resolveModelToolIds,
+  resolveToolsSelection
+} from "./toolsRuntime";
 import type { OpenWebUIFunction, OpenWebUITool, OpenWebUIModel } from "../openwebui/types";
 
 describe("toolsRuntime", () => {
@@ -56,13 +61,13 @@ describe("toolsRuntime", () => {
 
     expect(menu.map((item) => [item.id, item.kind, item.isEnabledByDefault])).toEqual([
       ["web_search", "builtin", false],
-      ["search_tool", "tool", true],
-      ["model_tool", "tool", true],
+      ["search_tool", "tool", false],
+      ["model_tool", "tool", false],
       ["style_filter", "filter", true]
     ]);
   });
 
-  it("resolves selected tool ids, filter ids, and feature flags", () => {
+  it("resolves explicitly selected tool ids, filter ids, and feature flags", () => {
     const menu = buildToolsMenu({
       availableFeatures: { web_search: true, memory: true },
       functions: [
@@ -91,7 +96,7 @@ describe("toolsRuntime", () => {
     });
 
     const selection = resolveToolsSelection({
-      disabledIds: ["search_tool"],
+      disabledIds: [],
       enabledIds: ["optional_tool", "web_search"],
       items: menu
     });
@@ -136,5 +141,23 @@ describe("toolsRuntime", () => {
         modelItem: { id: "llama", capabilities: { web_search: false } }
       }).web_search
     ).toBe(false);
+  });
+
+  it("resolves model-assigned tool ids from common Open WebUI model metadata shapes", () => {
+    expect(
+      resolveModelToolIds({
+        id: "llama",
+        meta: {
+          toolIds: ["get_current_timestamp"],
+          tool_ids: ["search_web"],
+          default_tool_ids: ["get_current_timestamp"]
+        },
+        info: {
+          meta: {
+            defaultToolIds: ["calendar_lookup"]
+          }
+        }
+      })
+    ).toEqual(["get_current_timestamp", "search_web", "calendar_lookup"]);
   });
 });

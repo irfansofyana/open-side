@@ -184,9 +184,7 @@ export type ChatCompletionRequest = {
   features: FeatureFlags;
   params: Record<string, unknown>;
   variables: Record<string, unknown>;
-  metadata: {
-    variables: Record<string, unknown>;
-  };
+  metadata: Record<string, unknown>;
   stream_options: {
     include_usage: true;
   };
@@ -208,6 +206,7 @@ export type BuildCompletionPayloadInput = {
   features?: Partial<FeatureFlags>;
   params?: Record<string, unknown>;
   variables?: Record<string, unknown>;
+  files?: Array<Record<string, unknown>>;
   backgroundTasks?: Record<string, unknown>;
   toolServers?: Array<Record<string, unknown>>;
   isPipeModel?: boolean;

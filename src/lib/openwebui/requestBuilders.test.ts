@@ -1,4 +1,4 @@
-import { buildCompletionPayload } from "./requestBuilders";
+import { buildCompletionPayload, buildOpenWebUIPromptVariables } from "./requestBuilders";
 
 test("buildCompletionPayload creates the Open WebUI chat completion shape", () => {
   const payload = buildCompletionPayload({
@@ -36,6 +36,23 @@ test("buildCompletionPayload creates the Open WebUI chat completion shape", () =
     params: {},
     variables: {},
     metadata: {
+      chat_id: "chat-1",
+      direct: false,
+      features: {
+        web_search: true,
+        image_generation: false,
+        code_interpreter: false,
+        memory: false
+      },
+      files: [],
+      filter_ids: ["filter-1"],
+      interface: "open-webui",
+      message_id: "assistant-message-1",
+      model: { id: "openrouter.anthropic/claude-haiku-4.5" },
+      session_id: "session-1",
+      tool_ids: ["tool-1"],
+      tool_servers: [],
+      type: "user_response",
       variables: {}
     },
     stream_options: {
@@ -75,4 +92,24 @@ test("buildCompletionPayload keeps variables shared with metadata", () => {
 
   expect(payload.variables).toBe(variables);
   expect(payload.metadata.variables).toBe(variables);
+});
+
+test("buildOpenWebUIPromptVariables creates current date variables in the user timezone", () => {
+  expect(
+    buildOpenWebUIPromptVariables({
+      now: new Date("2026-05-03T03:04:05.000Z"),
+      timeZone: "Asia/Jakarta",
+      userLanguage: "id-ID",
+      userName: "Ada"
+    })
+  ).toEqual({
+    "{{CURRENT_DATE}}": "2026-05-03",
+    "{{CURRENT_DATETIME}}": "2026-05-03 10:04:05",
+    "{{CURRENT_TIME}}": "10:04:05",
+    "{{CURRENT_TIMEZONE}}": "Asia/Jakarta",
+    "{{CURRENT_WEEKDAY}}": "Sunday",
+    "{{USER_LANGUAGE}}": "id-ID",
+    "{{USER_LOCATION}}": "Unknown",
+    "{{USER_NAME}}": "Ada"
+  });
 });

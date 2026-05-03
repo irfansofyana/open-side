@@ -1,4 +1,7 @@
-import { buildCompletionPayload } from "../openwebui/requestBuilders";
+import {
+  buildCompletionPayload,
+  buildOpenWebUIPromptVariables
+} from "../openwebui/requestBuilders";
 import { parseOpenWebUIRealtimeEvent, readStreamEvents } from "../openwebui/stream";
 import { normalizeCitationSources } from "../openwebui/citations";
 import type { StreamDiagnosticsLogger } from "./streamDiagnostics";
@@ -80,6 +83,17 @@ export type SendPersistedMessageInput = Omit<
   onEvent?: (event: StreamEvent) => void;
 };
 
+export type SendDirectPersistedMessageInput = Omit<
+  SendPersistedMessageInput,
+  | "delay"
+  | "pollIntervalMs"
+  | "pollMaxAttempts"
+  | "realtimeClient"
+  | "realtimeFallbackPollDelayMs"
+> & {
+  streamIdleTimeoutMs?: number;
+};
+
 export type SendPersistedMessageResult = {
   assistantText: string;
   chatId: string;
@@ -103,6 +117,16 @@ const defaultDelay = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
 const defaultIdGenerator = (): string => crypto.randomUUID();
+
+const withDefaultPromptVariables = <T extends { variables?: Record<string, unknown> }>(
+  payloadInput: T,
+  now?: () => number
+): T & { variables: Record<string, unknown> } => ({
+  ...payloadInput,
+  variables:
+    payloadInput.variables ??
+    buildOpenWebUIPromptVariables(now ? { now: new Date(now()) } : {})
+});
 
 const buildAssistantMessage = ({
   assistantMessageId,
@@ -543,6 +567,38 @@ const getPersistedAssistantSources = (
   return isRecord(arrayMessage) ? getMessageSources(arrayMessage) : [];
 };
 
+const nonAnswerBlockPattern = new RegExp(
+  [
+    '<details\\s+[^>]*type=["\\\'](?:reasoning|tool_calls)["\\\'][^>]*>[\\s\\S]*?<\\/details>',
+    "<think>[\\s\\S]*?<\\/think>",
+    "<thinking>[\\s\\S]*?<\\/thinking>",
+    "<reason>[\\s\\S]*?<\\/reason>",
+    "<reasoning>[\\s\\S]*?<\\/reasoning>",
+    "<thought>[\\s\\S]*?<\\/thought>",
+    "<\\|begin_of_thought\\|>[\\s\\S]*?<\\|end_of_thought\\|>"
+  ].join("|"),
+  "gi"
+);
+
+const trailingNonAnswerBlockPattern = new RegExp(
+  [
+    '<details\\s+[^>]*type=["\\\'](?:reasoning|tool_calls)["\\\'][^>]*>[\\s\\S]*$',
+    "<think>[\\s\\S]*$",
+    "<thinking>[\\s\\S]*$",
+    "<reason>[\\s\\S]*$",
+    "<reasoning>[\\s\\S]*$",
+    "<thought>[\\s\\S]*$",
+    "<\\|begin_of_thought\\|>[\\s\\S]*$"
+  ].join("|"),
+  "gi"
+);
+
+const hasAssistantAnswerText = (content: string): boolean =>
+  content
+    .replace(nonAnswerBlockPattern, "")
+    .replace(trailingNonAnswerBlockPattern, "")
+    .trim().length > 0;
+
 const appendContentDelta = ({
   assistantText,
   content,
@@ -625,6 +681,40 @@ const emitPersistedDelta = ({
   }
 
   return persistedText;
+};
+
+const replaceAssistantMessageInPayload = ({
+  assistantMessage,
+  assistantMessageId,
+  payload
+}: {
+  assistantMessage: Record<string, unknown>;
+  assistantMessageId: string;
+  payload: ChatMutationPayload;
+}): ChatMutationPayload => {
+  const chat = isRecord(payload.chat) ? payload.chat : {};
+  const messages = Array.isArray(chat.messages)
+    ? chat.messages.map((message) =>
+        isRecord(message) && message.id === assistantMessageId ? assistantMessage : message
+      )
+    : chat.messages;
+  const history = isRecord(chat.history) ? chat.history : {};
+  const historyMessages = isRecord(history.messages) ? history.messages : {};
+
+  return {
+    ...payload,
+    chat: {
+      ...chat,
+      messages,
+      history: {
+        ...history,
+        messages: {
+          ...historyMessages,
+          [assistantMessageId]: assistantMessage
+        }
+      }
+    }
+  };
 };
 
 const applyAssistantStreamEvent = ({
@@ -716,7 +806,7 @@ export async function sendStreamingMessage({
 }: SendStreamingMessageInput): Promise<SendStreamingMessageResult> {
   const messages = [...previousMessages, { role: "user", content: prompt }];
   const payload = buildCompletionPayload({
-    ...payloadInput,
+    ...withDefaultPromptVariables(payloadInput),
     messages
   });
   const stream = await client.streamChatCompletion(payload);
@@ -764,6 +854,166 @@ export async function loadChatForDisplay({
   return {
     chat,
     messages: toDisplayMessages(chat)
+  };
+}
+
+export async function sendDirectPersistedMessage({
+  activeChat,
+  client,
+  diagnostics,
+  idGenerator = defaultIdGenerator,
+  now = Date.now,
+  onContent,
+  onEvent,
+  prompt,
+  streamIdleTimeoutMs = 60000,
+  title,
+  ...payloadInput
+}: SendDirectPersistedMessageInput): Promise<SendPersistedMessageResult> {
+  diagnostics?.log("chat.direct.send.start", {
+    activeChat: Boolean(activeChat),
+    modelId: payloadInput.modelId,
+    promptLength: prompt.length
+  });
+  const userMessageId = idGenerator();
+  const assistantMessageId = idGenerator();
+  const sessionId = idGenerator();
+  const timestamp = Math.floor(now() / 1000);
+  const chatSetup = activeChat
+    ? buildContinuationChatMutation({
+        activeChat,
+        assistantMessageId,
+        modelId: payloadInput.modelId,
+        prompt,
+        timestamp,
+        userMessageId
+      })
+    : (() => {
+        const { payload, userMessage } = buildInitialChatMutation({
+          assistantMessageId,
+          modelId: payloadInput.modelId,
+          prompt,
+          timestamp,
+          title: title ?? (prompt.slice(0, 80) || "New chat"),
+          userMessageId
+        });
+
+        return {
+          chatId: undefined,
+          messages: [{ role: "user", content: prompt }],
+          parentId: userMessageId,
+          payload,
+          userMessage
+        };
+      })();
+  const streamPayload = buildCompletionPayload({
+    ...withDefaultPromptVariables(payloadInput, now),
+    isPipeModel: true,
+    messages: chatSetup.messages
+  });
+  const stream = await client.streamChatCompletion(streamPayload);
+  let assistantText = "";
+  let hasAnswerText = false;
+  let isReasoningOpen = false;
+  let sources: CitationSource[] = [];
+  let sawFirstText = false;
+
+  diagnostics?.log("chat.direct.stream.opened", { modelId: payloadInput.modelId });
+
+  for await (const event of readStreamEvents(stream, {
+    idleTimeoutMs: streamIdleTimeoutMs,
+    timeoutMessage: "Open WebUI direct stream stalled"
+  })) {
+    const isTextEvent =
+      event.type === "content" || event.type === "reasoning" || event.type === "replace";
+    const isAnswerEvent = event.type === "content" || event.type === "replace";
+
+    if (isTextEvent && !sawFirstText) {
+      sawFirstText = true;
+      diagnostics?.log("chat.direct.first_text", { source: "http" });
+    }
+
+    if (isAnswerEvent && event.content.trim()) {
+      hasAnswerText = true;
+    }
+
+    const result = applyAssistantStreamEvent({
+      assistantText,
+      event,
+      isReasoningOpen,
+      onContent,
+      onEvent,
+      sources
+    });
+    assistantText = result.assistantText;
+    isReasoningOpen = result.isReasoningOpen;
+    sources = result.sources;
+  }
+
+  const closed = closeReasoningBlock({ assistantText, isReasoningOpen, onContent });
+  assistantText = closed.assistantText;
+
+  if (!hasAnswerText && !assistantText.trim()) {
+    throw new Error("Assistant response did not include text content");
+  }
+
+  if (!hasAnswerText) {
+    diagnostics?.log("chat.direct.reasoning_only", {
+      assistantChars: assistantText.length,
+      modelId: payloadInput.modelId
+    });
+  }
+
+  diagnostics?.log("chat.direct.persist.start", {
+    assistantChars: assistantText.length,
+    activeChat: Boolean(activeChat)
+  });
+
+  const assistantMessage = buildAssistantMessage({
+    assistantMessageId,
+    content: assistantText,
+    done: true,
+    modelId: payloadInput.modelId,
+    sources,
+    timestamp: Math.floor(now() / 1000),
+    userMessageId
+  });
+  const finalPayload = replaceAssistantMessageInPayload({
+    assistantMessage,
+    assistantMessageId,
+    payload: chatSetup.payload
+  });
+  const chatId = chatSetup.chatId
+    ? chatSetup.chatId
+    : getCreatedChatId(await client.createChat(finalPayload));
+
+  if (chatSetup.chatId) {
+    await client.updateChat(chatId, finalPayload);
+  }
+
+  await client.completeChat({
+    chat_id: chatId,
+    id: assistantMessageId,
+    session_id: sessionId,
+    model: payloadInput.modelId,
+    message: assistantMessage
+  });
+
+  const refreshedChat = await client.getChat(chatId);
+  sources = normalizeCitationSources([
+    ...sources,
+    ...getPersistedAssistantSources(refreshedChat, assistantMessageId)
+  ]);
+  diagnostics?.log("chat.direct.send.done", {
+    assistantChars: assistantText.length,
+    chatId
+  });
+
+  return {
+    assistantText,
+    chatId,
+    refreshedChat,
+    ...(sources.length > 0 ? { sources } : {})
   };
 }
 
@@ -828,6 +1078,7 @@ export async function sendPersistedMessage({
 
   let assistantText = "";
   let contentSource: "http" | "poll" | "realtime" | undefined;
+  let hasAnswerText = false;
   let hasHttpStreamText = false;
   let httpDone = false;
   let isReasoningOpen = false;
@@ -836,6 +1087,10 @@ export async function sendPersistedMessage({
   let realtimeConnected = false;
   let sessionId = fallbackSessionId;
   let sources: CitationSource[] = [];
+  const usesServerToolsOrFeatures =
+    (payloadInput.toolIds?.length ?? 0) > 0 ||
+    (payloadInput.filterIds?.length ?? 0) > 0 ||
+    Object.values(payloadInput.features ?? {}).some((value) => value === true);
   let unsubscribeRealtime: (() => void) | undefined;
   let resolveRealtimeDone: () => void = () => undefined;
   const realtimeDoneSignal = new Promise<void>((resolve) => {
@@ -872,6 +1127,16 @@ export async function sendPersistedMessage({
 
     const isTextEvent =
       event.type === "content" || event.type === "reasoning" || event.type === "replace";
+    const isAnswerEvent = event.type === "content" || event.type === "replace";
+
+    if (usesServerToolsOrFeatures && isTextEvent) {
+      diagnostics?.log("chat.stream.tool_text_ignored", {
+        ...(contentLength === undefined ? {} : { contentLength }),
+        source,
+        type: event.type
+      });
+      return;
+    }
 
     if (isTextEvent && contentSource && contentSource !== source) {
       diagnostics?.log("chat.stream.ignored_source", {
@@ -888,6 +1153,10 @@ export async function sendPersistedMessage({
       }
       contentSource = source;
       hasHttpStreamText ||= source === "http";
+    }
+
+    if (isAnswerEvent && event.content.trim()) {
+      hasAnswerText = true;
     }
 
     const result = applyAssistantStreamEvent({
@@ -962,7 +1231,7 @@ export async function sendPersistedMessage({
   }
 
   const completionPayload = buildCompletionPayload({
-    ...payloadInput,
+    ...withDefaultPromptVariables(payloadInput, now),
     assistantMessageId,
     backgroundTasks: {
       title_generation: true,
@@ -1021,7 +1290,7 @@ export async function sendPersistedMessage({
     let refreshedDuringStream: ChatTree | undefined;
     let lastPersistedText = "";
     let stalePollCount = 0;
-    const liveStreamHasText = () => assistantText.trim() && (httpDone || realtimeDone);
+    const liveStreamHasText = () => hasAnswerText && (httpDone || realtimeDone);
 
     for (let attempt = 1; attempt <= pollMaxAttempts; attempt += 1) {
       if (completionError) {
@@ -1055,6 +1324,20 @@ export async function sendPersistedMessage({
 
       refreshedDuringStream = await client.getChat(chatId);
       const persistedText = getPersistedAssistantText(refreshedDuringStream, assistantMessageId);
+      const persistedHasAnswerText = hasAssistantAnswerText(persistedText);
+      const persistedMessage = refreshedDuringStream.messages[assistantMessageId];
+      const isDone =
+        isRecord(persistedMessage) && typeof persistedMessage.done === "boolean"
+          ? persistedMessage.done
+          : false;
+      const canUsePersistedText =
+        persistedText.trim() &&
+        (!contentSource ||
+          contentSource === "poll" ||
+          !hasAnswerText ||
+          (usesServerToolsOrFeatures &&
+            persistedText !== assistantText &&
+            (isDone || persistedText.startsWith(assistantText))));
       diagnostics?.log("chat.poll.response", {
         assistantMessageId,
         attempt,
@@ -1062,7 +1345,7 @@ export async function sendPersistedMessage({
         persistedLength: persistedText.length
       });
 
-      if (persistedText.trim() && (!contentSource || contentSource === "poll")) {
+      if (canUsePersistedText) {
         if (!contentSource) {
           diagnostics?.log("chat.poll.first_content", {
             assistantMessageId,
@@ -1071,9 +1354,22 @@ export async function sendPersistedMessage({
             contentLength: persistedText.length
           });
           diagnostics?.log("chat.stream.first_text", { source: "poll" });
+        } else if (contentSource !== "poll") {
+          diagnostics?.log("chat.poll.takeover", {
+            attempt,
+            previousSource: contentSource,
+            reason: isDone ? "persisted-done" : "persisted-extended",
+            persistedLength: persistedText.length
+          });
         }
         contentSource = "poll";
+        if (isReasoningOpen) {
+          const closed = closeReasoningBlock({ assistantText, isReasoningOpen, onContent });
+          assistantText = closed.assistantText;
+          isReasoningOpen = closed.isReasoningOpen;
+        }
         assistantText = emitPersistedDelta({ assistantText, onContent, persistedText });
+        hasAnswerText ||= persistedHasAnswerText;
 
         if (persistedText.length > lastPersistedText.length) {
           lastPersistedText = persistedText;
@@ -1088,13 +1384,7 @@ export async function sendPersistedMessage({
         ...getPersistedAssistantSources(refreshedDuringStream, assistantMessageId)
       ]);
 
-      const persistedMessage = refreshedDuringStream.messages[assistantMessageId];
-      const isDone =
-        isRecord(persistedMessage) && typeof persistedMessage.done === "boolean"
-          ? persistedMessage.done
-          : false;
-
-      if (assistantText.trim() && (isDone || stalePollCount >= 2)) {
+      if (hasAnswerText && (isDone || stalePollCount >= 2)) {
         diagnostics?.log("chat.poll.stop", {
           attempt,
           isDone,
@@ -1104,7 +1394,7 @@ export async function sendPersistedMessage({
       }
     }
 
-    if (!httpDone && (hasHttpStreamText || !assistantText.trim())) {
+    if (!httpDone && (contentSource === "http" || !assistantText.trim())) {
       await httpDoneSignal;
     }
 
@@ -1120,7 +1410,7 @@ export async function sendPersistedMessage({
   assistantText = closed.assistantText;
 
   let refreshedChat: ChatTree | undefined;
-  const shouldPollPersistedText = !assistantText.trim();
+  const shouldPollPersistedText = !hasAnswerText;
 
   for (
     let attempt = 1;
@@ -1129,6 +1419,7 @@ export async function sendPersistedMessage({
   ) {
     refreshedChat = await client.getChat(chatId);
     const persistedText = getPersistedAssistantText(refreshedChat, assistantMessageId);
+    const persistedHasAnswerText = hasAssistantAnswerText(persistedText);
 
     if (persistedText.trim()) {
       diagnostics?.log("chat.final_poll.content", {
@@ -1137,6 +1428,7 @@ export async function sendPersistedMessage({
         contentLength: persistedText.length
       });
       assistantText = emitPersistedDelta({ assistantText, onContent, persistedText });
+      hasAnswerText ||= persistedHasAnswerText;
     }
 
     sources = normalizeCitationSources([
@@ -1150,11 +1442,11 @@ export async function sendPersistedMessage({
         ? persistedMessage.done
         : false;
 
-    if (assistantText.trim() && isDone) {
+    if (hasAnswerText && isDone) {
       break;
     }
 
-    if (assistantText.trim() && attempt >= 3) {
+    if (hasAnswerText && attempt >= 3) {
       break;
     }
 
@@ -1163,7 +1455,7 @@ export async function sendPersistedMessage({
     }
   }
 
-  if (!assistantText.trim()) {
+  if (!hasAnswerText) {
     throw new Error("Assistant response did not include text content");
   }
 

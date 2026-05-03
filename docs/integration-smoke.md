@@ -179,14 +179,17 @@ Run this after chat rendering changes.
 8. Send a prompt to a reasoning model, or load a response with `<think>...</think>`, `<reasoning>...</reasoning>`, or `<details type="reasoning">...</details>`.
 9. Confirm thinking content appears in a collapsible reasoning panel while the final answer remains readable.
 10. Send a prompt that takes long enough to respond and confirm the assistant text appears incrementally while the request is still running.
-11. In browser devtools, confirm the side panel opens `/api/chat/completions` as a streaming request and establishes a websocket-first Socket.IO connection to `/ws/socket.io` for normal persisted chats.
+11. In browser devtools, confirm a plain send opens `/api/chat/completions` as a streaming request whose request payload does not include `chat_id`, assistant `id`, or `session_id`.
 12. Confirm token text appears in multiple visible increments for both SSE `data:` streams and Open WebUI JSONL streams such as `{"done":false,"message":{"content":"..."}}`, not as a single full-answer snapshot after server persistence updates.
-13. If Socket.IO cannot connect or stays silent through the server or reverse proxy, confirm HTTP stream chunks still render incrementally when the server returns them, or that the response recovers through the persisted polling fallback while generation is running.
+13. After completion, confirm the extension persists the conversation with `/api/v1/chats/new` or `POST /api/v1/chats/:id`, calls `/api/chat/completed`, and refetches the chat detail.
 14. Send or load assistant text containing raw HTML such as `<strong>bold</strong>` and confirm it is not executed as HTML.
 15. Enable web search or a source-returning tool, then ask a current factual question.
-16. Confirm backed citation markers render as compact clickable source references.
-17. Confirm one sources disclosure button appears below the assistant answer.
-18. Confirm clicking the sources button shows/hides the source list, and clicking a source reveals URL/snippet details.
+16. In browser devtools, confirm this tool/feature send uses the managed Open WebUI path with `chat_id`, assistant `id`, and `session_id`, then recovers through Socket.IO or polling if the HTTP body is quiet.
+17. Confirm backed citation markers render as compact clickable source references.
+18. Confirm one sources disclosure button appears below the assistant answer.
+19. Confirm clicking the sources button shows/hides the source list, and clicking a source reveals URL/snippet details.
+20. Without opening the tools picker, ask a model that advertises timestamp or web tools a normal question.
+21. Confirm the request does not include `tool_ids` unless you explicitly selected a tool, and that the payload still includes WebUI current-date/current-time prompt variables.
 
 Expected:
 
@@ -214,6 +217,14 @@ Use the first `chat.stream.first_text` event to identify which path delivered co
 - `source: "realtime"` means Socket.IO delivered streamed events.
 - `source: "http"` means `/api/chat/completions` returned readable stream events.
 - `source: "poll"` means the UI recovered content from persisted chat polling.
+
+For explicit tool/feature sends, persisted chat is the displayed answer source of truth. `chat.stream.tool_text_ignored` means the extension ignored a live HTTP/realtime text preamble for a managed tool run, and `chat.stream.first_text` with `source: "poll"` means the first displayed answer came from persisted chat recovery.
+
+Reasoning panels are progress, not completion. If the visible response only contains Thinking, the extension should keep waiting, poll persisted chat, or eventually show a visible error instead of finalizing that message as a completed answer. This also applies when the thinking snapshot comes from persisted chat polling during a tool run.
+
+On the plain direct-streaming path, `chat.direct.reasoning_only` means the model emitted reasoning but no final answer tokens. The extension preserves that partial model response without showing the generic no-content error.
+
+On the plain direct-streaming path, use `chat.direct.first_text` to confirm the extension rendered the first HTTP chunk before starting the `chat.direct.persist.start` phase. If that direct stream stops producing bytes after partial output, it should fail with a visible error instead of leaving the composer stuck in a sending state.
 
 ## Manual Recent Chats Smoke
 

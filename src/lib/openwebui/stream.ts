@@ -266,33 +266,76 @@ export function parseOpenWebUIRealtimeEvent(event: unknown):
   return undefined;
 }
 
+type ReadStreamEventsOptions = {
+  idleTimeoutMs?: number;
+  timeoutMessage?: string;
+};
+
+const readWithIdleTimeout = async (
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  { idleTimeoutMs, timeoutMessage }: ReadStreamEventsOptions
+): Promise<ReadableStreamReadResult<Uint8Array>> => {
+  if (!idleTimeoutMs || idleTimeoutMs <= 0) {
+    return reader.read();
+  }
+
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let didTimeout = false;
+  const timeoutPromise = new Promise<ReadableStreamReadResult<Uint8Array>>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      didTimeout = true;
+      reject(new Error(timeoutMessage ?? "Open WebUI stream stalled"));
+    }, idleTimeoutMs);
+  });
+
+  try {
+    return await Promise.race([reader.read(), timeoutPromise]);
+  } catch (error) {
+    if (didTimeout) {
+      await reader.cancel().catch(() => undefined);
+    }
+
+    throw error;
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+};
+
 export async function* readStreamEvents(
-  stream: ReadableStream<Uint8Array>
+  stream: ReadableStream<Uint8Array>,
+  options: ReadStreamEventsOptions = {}
 ): AsyncGenerator<StreamEvent> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
 
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) {
-      break;
-    }
+  try {
+    while (true) {
+      const { value, done } = await readWithIdleTimeout(reader, options);
+      if (done) {
+        break;
+      }
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split(/\r?\n/);
-    buffer = lines.pop() ?? "";
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() ?? "";
 
-    for (const line of lines) {
-      const event = parseSSELine(line);
-      if (event) {
-        yield event;
+      for (const line of lines) {
+        const event = parseSSELine(line);
+        if (event) {
+          yield event;
+        }
       }
     }
-  }
 
-  const tail = parseSSELine(buffer);
-  if (tail) {
-    yield tail;
+    buffer += decoder.decode();
+    const tail = parseSSELine(buffer);
+    if (tail) {
+      yield tail;
+    }
+  } finally {
+    reader.releaseLock();
   }
 }

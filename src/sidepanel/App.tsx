@@ -50,6 +50,7 @@ import {
   listRecentChats,
   loadChatForDisplay,
   type LoadChatForDisplayResult,
+  sendDirectPersistedMessage,
   sendPersistedMessage,
   type SendPersistedMessageResult
 } from "../lib/runtime/chatRuntime";
@@ -112,6 +113,17 @@ const getErrorMessage = (error: unknown): string =>
 
 const isPipeModel = (modelItem: OpenWebUIModel): boolean => modelItem.pipe !== undefined;
 
+export const shouldUseManagedOpenWebUIPath = ({
+  features,
+  filterIds,
+  toolIds
+}: Pick<AppSendMessageInput, "features" | "filterIds" | "toolIds"> & {
+  modelItem?: OpenWebUIModel;
+}): boolean =>
+  toolIds.length > 0 ||
+  filterIds.length > 0 ||
+  Object.values(features).some(Boolean);
+
 const defaultSendMessage = ({
   activeChat,
   connection,
@@ -129,13 +141,32 @@ const defaultSendMessage = ({
     baseUrl: connection.server.baseUrl,
     getToken: () => connection.session.token
   });
-  const realtimeClient = new OpenWebUIRealtimeClient({
-    baseUrl: connection.server.baseUrl,
-    diagnostics: streamDiagnostics,
-    token: connection.session.token
-  });
+  if (shouldUseManagedOpenWebUIPath({ features, filterIds, modelItem, toolIds })) {
+    const realtimeClient = new OpenWebUIRealtimeClient({
+      baseUrl: connection.server.baseUrl,
+      diagnostics: streamDiagnostics,
+      token: connection.session.token
+    });
 
-  return sendPersistedMessage({
+    return sendPersistedMessage({
+      activeChat,
+      client,
+      diagnostics: streamDiagnostics,
+      features,
+      filterIds,
+      isPipeModel: isPipeModel(modelItem),
+      modelItem,
+      modelId,
+      prompt,
+      realtimeClient,
+      toolIds,
+      title,
+      onContent,
+      onEvent
+    });
+  }
+
+  return sendDirectPersistedMessage({
     activeChat,
     client,
     diagnostics: streamDiagnostics,
@@ -145,7 +176,6 @@ const defaultSendMessage = ({
     modelItem,
     modelId,
     prompt,
-    realtimeClient,
     toolIds,
     title,
     onContent,
@@ -584,7 +614,15 @@ export function App({
       setIsTabsOpen(false);
     } catch (error) {
       setErrorMessage(getErrorMessage(error));
-      setChatMessages((messages) => messages.filter((message) => message.id !== assistantId));
+      setChatMessages((messages) =>
+        messages.flatMap((message) => {
+          if (message.id !== assistantId) {
+            return [message];
+          }
+
+          return message.content.trim() ? [message] : [];
+        })
+      );
     } finally {
       setIsSending(false);
     }
@@ -608,6 +646,9 @@ export function App({
 
   const handleSelectModel = (modelId: string) => {
     setSelectedModelId(modelId);
+    setToolMenuItems([]);
+    setEnabledToolItemIds(new Set());
+    setDisabledToolItemIds(new Set());
 
     if (!connection) {
       return;

@@ -1,6 +1,7 @@
 import {
   listRecentChats,
   loadChatForDisplay,
+  sendDirectPersistedMessage,
   sendPersistedMessage,
   sendStreamingMessage
 } from "./chatRuntime";
@@ -23,6 +24,26 @@ const createPendingStream = (): ReadableStream<Uint8Array> =>
       // Keep the HTTP body open so realtime or polling can win the race.
     }
   });
+
+const createControlledStream = (): {
+  close: () => void;
+  enqueue: (chunk: string) => void;
+  stream: ReadableStream<Uint8Array>;
+} => {
+  let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      streamController = controller;
+    }
+  });
+
+  return {
+    close: () => streamController?.close(),
+    enqueue: (chunk) => streamController?.enqueue(encoder.encode(chunk)),
+    stream
+  };
+};
 
 test("sendStreamingMessage builds payload, streams content, and returns assistant text", async () => {
   let sentPayload: ChatCompletionRequest | undefined;
@@ -163,6 +184,369 @@ test("sendStreamingMessage forwards payload options and throws on stream error e
   );
 });
 
+test("sendDirectPersistedMessage streams direct HTTP chunks before creating server chat", async () => {
+  const controlledStream = createControlledStream();
+  const refreshedChat: ChatTree = {
+    id: "chat-1",
+    title: "Direct stream",
+    currentId: "assistant-1",
+    messages: {
+      "assistant-1": { id: "assistant-1", role: "assistant", content: "Hello world" }
+    }
+  };
+  const client = {
+    createChat: vi.fn(async () => ({ id: "chat-1" })),
+    updateChat: vi.fn(async () => ({ id: "chat-1" })),
+    streamChatCompletion: vi.fn(async (_payload: ChatCompletionRequest) => controlledStream.stream),
+    getChat: vi.fn(async () => refreshedChat),
+    completeChat: vi.fn(async () => ({ ok: true }))
+  };
+  const contentChunks: string[] = [];
+  const diagnostics = { log: vi.fn() };
+
+  const sendPromise = sendDirectPersistedMessage({
+    client,
+    diagnostics,
+    idGenerator: vi
+      .fn()
+      .mockReturnValueOnce("user-1")
+      .mockReturnValueOnce("assistant-1")
+      .mockReturnValueOnce("session-1"),
+    modelId: "openrouter/fast",
+    modelItem: { id: "openrouter/fast", name: "Fast" },
+    now: () => 1714528800000,
+    prompt: "Say hello",
+    onContent: (content) => contentChunks.push(content)
+  });
+
+  await vi.waitFor(() => {
+    expect(client.streamChatCompletion).toHaveBeenCalled();
+  });
+  controlledStream.enqueue('data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n');
+
+  await vi.waitFor(() => {
+    expect(contentChunks).toEqual(["Hello"]);
+  });
+  expect(client.createChat).not.toHaveBeenCalled();
+
+  controlledStream.enqueue('data: {"choices":[{"delta":{"content":" world"}}]}\n\n');
+  controlledStream.enqueue("data: [DONE]\n\n");
+  controlledStream.close();
+
+  await expect(sendPromise).resolves.toEqual({
+    assistantText: "Hello world",
+    chatId: "chat-1",
+    refreshedChat
+  });
+  expect(client.streamChatCompletion).toHaveBeenCalledWith(
+    expect.not.objectContaining({
+      chat_id: expect.anything(),
+      id: expect.anything(),
+      session_id: expect.anything()
+    })
+  );
+  const directPayload = vi.mocked(client.streamChatCompletion).mock.calls[0]?.[0];
+  expect(directPayload?.variables).toEqual(
+    expect.objectContaining({
+      "{{CURRENT_DATE}}": expect.any(String),
+      "{{CURRENT_DATETIME}}": expect.any(String),
+      "{{CURRENT_TIME}}": expect.any(String),
+      "{{CURRENT_TIMEZONE}}": expect.any(String),
+      "{{CURRENT_WEEKDAY}}": expect.any(String)
+    })
+  );
+  expect(directPayload?.metadata).toEqual(
+    expect.objectContaining({
+      interface: "open-webui",
+      variables: directPayload?.variables
+    })
+  );
+  expect(client.createChat).toHaveBeenCalledWith({
+    chat: expect.objectContaining({
+      currentId: "assistant-1",
+      messages: expect.arrayContaining([
+        expect.objectContaining({ id: "user-1", content: "Say hello" }),
+        expect.objectContaining({
+          id: "assistant-1",
+          content: "Hello world",
+          done: true
+        })
+      ])
+    })
+  });
+  expect(client.completeChat).toHaveBeenCalledWith(
+    expect.objectContaining({
+      chat_id: "chat-1",
+      id: "assistant-1",
+      session_id: "session-1",
+      message: expect.objectContaining({
+        content: "Hello world",
+        done: true
+      })
+    })
+  );
+  expect(diagnostics.log).toHaveBeenCalledWith("chat.direct.first_text", {
+    source: "http"
+  });
+  expect(diagnostics.log).toHaveBeenCalledWith("chat.direct.persist.start", {
+    assistantChars: 11,
+    activeChat: false
+  });
+});
+
+test("sendDirectPersistedMessage continues an active chat after direct streaming finishes", async () => {
+  const activeChat: ChatTree = {
+    id: "chat-1",
+    title: "Existing chat",
+    currentId: "assistant-prev",
+    messages: {
+      "user-prev": { id: "user-prev", role: "user", content: "Hello" },
+      "assistant-prev": {
+        id: "assistant-prev",
+        role: "assistant",
+        content: "Hi there"
+      }
+    },
+    raw: {
+      chat: {
+        title: "Existing chat",
+        models: ["openrouter/fast"],
+        currentId: "assistant-prev",
+        messages: [
+          {
+            id: "user-prev",
+            role: "user",
+            content: "Hello",
+            timestamp: 1714528700,
+            models: ["openrouter/fast"],
+            childrenIds: ["assistant-prev"]
+          },
+          {
+            id: "assistant-prev",
+            parentId: "user-prev",
+            role: "assistant",
+            content: "Hi there",
+            timestamp: 1714528701,
+            childrenIds: [],
+            model: "openrouter/fast",
+            modelName: "openrouter/fast",
+            modelIdx: 0,
+            done: true
+          }
+        ],
+        history: {
+          currentId: "assistant-prev",
+          messages: {
+            "user-prev": {
+              id: "user-prev",
+              role: "user",
+              content: "Hello",
+              childrenIds: ["assistant-prev"]
+            },
+            "assistant-prev": {
+              id: "assistant-prev",
+              parentId: "user-prev",
+              role: "assistant",
+              content: "Hi there",
+              childrenIds: []
+            }
+          }
+        }
+      }
+    }
+  };
+  const refreshedChat: ChatTree = {
+    id: "chat-1",
+    title: "Existing chat",
+    currentId: "assistant-next",
+    messages: {
+      "assistant-next": {
+        id: "assistant-next",
+        role: "assistant",
+        content: "next answer"
+      }
+    }
+  };
+  const client = {
+    createChat: vi.fn(async () => ({ id: "new-chat" })),
+    updateChat: vi.fn(async () => ({ id: "chat-1" })),
+    streamChatCompletion: vi.fn(async () =>
+      createStream(['data: {"choices":[{"delta":{"content":"next answer"}}]}\n\n'])
+    ),
+    getChat: vi.fn(async () => refreshedChat),
+    completeChat: vi.fn(async () => ({ ok: true }))
+  };
+
+  await expect(
+    sendDirectPersistedMessage({
+      activeChat,
+      client,
+      idGenerator: vi
+        .fn()
+        .mockReturnValueOnce("user-next")
+        .mockReturnValueOnce("assistant-next")
+        .mockReturnValueOnce("session-1"),
+      modelId: "openrouter/fast",
+      modelItem: { id: "openrouter/fast" },
+      now: () => 1714528800000,
+      prompt: "Continue please"
+    })
+  ).resolves.toEqual({
+    assistantText: "next answer",
+    chatId: "chat-1",
+    refreshedChat
+  });
+
+  expect(client.createChat).not.toHaveBeenCalled();
+  expect(client.streamChatCompletion).toHaveBeenCalledWith(
+    expect.objectContaining({
+      messages: [
+        { role: "user", content: "Hello" },
+        { role: "assistant", content: "Hi there" },
+        { role: "user", content: "Continue please" }
+      ]
+    })
+  );
+  expect(client.streamChatCompletion).toHaveBeenCalledWith(
+    expect.not.objectContaining({
+      chat_id: expect.anything(),
+      id: expect.anything(),
+      session_id: expect.anything()
+    })
+  );
+  expect(client.updateChat).toHaveBeenCalledWith("chat-1", {
+    chat: expect.objectContaining({
+      currentId: "assistant-next",
+      messages: expect.arrayContaining([
+        expect.objectContaining({ id: "user-next", parentId: "assistant-prev" }),
+        expect.objectContaining({
+          id: "assistant-next",
+          content: "next answer",
+          done: true,
+          parentId: "user-next"
+        })
+      ]),
+      history: expect.objectContaining({
+        currentId: "assistant-next",
+        messages: expect.objectContaining({
+          "assistant-next": expect.objectContaining({
+            content: "next answer",
+            done: true,
+            parentId: "user-next"
+          })
+        })
+      })
+    })
+  });
+});
+
+test("sendDirectPersistedMessage preserves reasoning-only direct responses without throwing", async () => {
+  const refreshedChat: ChatTree = {
+    id: "chat-1",
+    title: "Reasoning only",
+    currentId: "assistant-1",
+    messages: {
+      "assistant-1": {
+        id: "assistant-1",
+        role: "assistant",
+        content: "<think>I know the current president.</think>\n\n"
+      }
+    }
+  };
+  const client = {
+    createChat: vi.fn(async () => ({ id: "chat-1" })),
+    updateChat: vi.fn(async () => ({ id: "chat-1" })),
+    streamChatCompletion: vi.fn(async () =>
+      createStream([
+        'data: {"choices":[{"delta":{"reasoning_content":"I know the current president."}}]}\n\n',
+        "data: [DONE]\n\n"
+      ])
+    ),
+    getChat: vi.fn(async () => refreshedChat),
+    completeChat: vi.fn(async () => ({ ok: true }))
+  };
+  const contentChunks: string[] = [];
+
+  await expect(
+    sendDirectPersistedMessage({
+      client,
+      idGenerator: vi
+        .fn()
+        .mockReturnValueOnce("user-1")
+        .mockReturnValueOnce("assistant-1")
+        .mockReturnValueOnce("session-1"),
+      modelId: "minimax-m2.7:cloud",
+      modelItem: { id: "minimax-m2.7:cloud" },
+      now: () => 1714528800000,
+      prompt: "siapa presiden indonesia sekarang",
+      onContent: (content) => contentChunks.push(content)
+    })
+  ).resolves.toEqual({
+    assistantText: "<think>I know the current president.</think>\n\n",
+    chatId: "chat-1",
+    refreshedChat
+  });
+
+  expect(contentChunks).toEqual(["<think>", "I know the current president.", "</think>\n\n"]);
+  expect(client.createChat).toHaveBeenCalledWith({
+    chat: expect.objectContaining({
+      messages: expect.arrayContaining([
+        expect.objectContaining({
+          id: "assistant-1",
+          content: "<think>I know the current president.</think>\n\n",
+          done: true
+        })
+      ])
+    })
+  });
+});
+
+test("sendDirectPersistedMessage aborts direct HTTP streaming when the response stalls", async () => {
+  const controlledStream = createControlledStream();
+  const client = {
+    createChat: vi.fn(async () => ({ id: "chat-1" })),
+    updateChat: vi.fn(async () => ({ id: "chat-1" })),
+    streamChatCompletion: vi.fn(async () => controlledStream.stream),
+    getChat: vi.fn(async () => ({
+      id: "chat-1",
+      title: "Direct stream",
+      messages: {}
+    })),
+    completeChat: vi.fn(async () => ({ ok: true }))
+  };
+  const contentChunks: string[] = [];
+
+  const sendPromise = sendDirectPersistedMessage({
+    client,
+    idGenerator: vi
+      .fn()
+      .mockReturnValueOnce("user-1")
+      .mockReturnValueOnce("assistant-1")
+      .mockReturnValueOnce("session-1"),
+    modelId: "openrouter/fast",
+    modelItem: { id: "openrouter/fast" },
+    now: () => 1714528800000,
+    prompt: "Think with tools",
+    streamIdleTimeoutMs: 5,
+    onContent: (content) => contentChunks.push(content)
+  });
+  const sendError = sendPromise.catch((error: unknown) => error);
+
+  await vi.waitFor(() => {
+    expect(client.streamChatCompletion).toHaveBeenCalled();
+  });
+  controlledStream.enqueue('data: {"choices":[{"delta":{"content":"Let me check"}}]}\n\n');
+
+  await vi.waitFor(() => {
+    expect(contentChunks).toEqual(["Let me check"]);
+  });
+  await expect(sendError).resolves.toEqual(
+    expect.objectContaining({ message: "Open WebUI direct stream stalled" })
+  );
+  expect(client.createChat).not.toHaveBeenCalled();
+  expect(client.completeChat).not.toHaveBeenCalled();
+});
+
 test("sendPersistedMessage creates linked chat, polls persisted text when stream is empty, finalizes, and refetches", async () => {
   const chatDetail: ChatTree = {
     id: "chat-1",
@@ -175,7 +559,7 @@ test("sendPersistedMessage creates linked chat, polls persisted text when stream
   const client = {
     createChat: vi.fn(async () => ({ id: "chat-1" })),
     updateChat: vi.fn(async () => ({ id: "chat-1" })),
-    streamChatCompletion: vi.fn(async () => createStream([])),
+    streamChatCompletion: vi.fn(async (_payload: ChatCompletionRequest) => createStream([])),
     getChat: vi
       .fn()
       .mockResolvedValueOnce({
@@ -282,6 +666,22 @@ test("sendPersistedMessage creates linked chat, polls persisted text when stream
         tags_generation: false,
         follow_up_generation: false
       }
+    })
+  );
+  const persistedPayload = vi.mocked(client.streamChatCompletion).mock.calls[0]?.[0];
+  expect(persistedPayload?.variables).toEqual(
+    expect.objectContaining({
+      "{{CURRENT_DATE}}": expect.any(String),
+      "{{CURRENT_DATETIME}}": expect.any(String),
+      "{{CURRENT_TIME}}": expect.any(String),
+      "{{CURRENT_TIMEZONE}}": expect.any(String),
+      "{{CURRENT_WEEKDAY}}": expect.any(String)
+    })
+  );
+  expect(persistedPayload?.metadata).toEqual(
+    expect.objectContaining({
+      interface: "open-webui",
+      variables: persistedPayload?.variables
     })
   );
   expect(delay).toHaveBeenCalledWith(25);
@@ -668,6 +1068,231 @@ test("sendPersistedMessage streams the completion response body when trigger hel
   );
   expect(client.triggerChatCompletion).not.toHaveBeenCalled();
   expect(contentChunks).toEqual(["Hello", " live"]);
+});
+
+test("sendPersistedMessage keeps polling when the live stream only produced reasoning", async () => {
+  const controlledStream = createControlledStream();
+  const finalChat: ChatTree = {
+    id: "chat-1",
+    title: "Reasoning",
+    currentId: "assistant-1",
+    messages: {
+      "assistant-1": {
+        id: "assistant-1",
+        role: "assistant",
+        content: "Hari ini tanggal 3 Mei 2026.",
+        done: true
+      }
+    }
+  };
+  const client = {
+    createChat: vi.fn(async () => ({ id: "chat-1" })),
+    updateChat: vi.fn(async () => ({ id: "chat-1" })),
+    streamChatCompletion: vi.fn(async () => controlledStream.stream),
+    triggerChatCompletion: vi.fn(async () => ({ ok: true })),
+    getChat: vi.fn(async () => finalChat),
+    completeChat: vi.fn(async () => ({ ok: true }))
+  };
+  const contentChunks: string[] = [];
+  const delayResolvers: Array<() => void> = [];
+  const delay = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        delayResolvers.push(resolve);
+      })
+  );
+
+  const sendPromise = sendPersistedMessage({
+    client,
+    delay,
+    idGenerator: vi
+      .fn()
+      .mockReturnValueOnce("user-1")
+      .mockReturnValueOnce("assistant-1")
+      .mockReturnValueOnce("fallback-session-1"),
+    modelId: "openrouter/fast",
+    modelItem: { id: "openrouter/fast", name: "Fast" },
+    now: () => 1714528800000,
+    pollIntervalMs: 5,
+    pollMaxAttempts: 2,
+    prompt: "Hari ini tanggal berapa?",
+    onContent: (content) => contentChunks.push(content)
+  });
+
+  await vi.waitFor(() => {
+    expect(client.streamChatCompletion).toHaveBeenCalled();
+  });
+  controlledStream.enqueue(
+    'data: {"choices":[{"delta":{"reasoning_content":"I need to check the current timestamp."}}]}\n\n'
+  );
+  await vi.waitFor(() => {
+    expect(contentChunks).toEqual(["<think>", "I need to check the current timestamp."]);
+  });
+  controlledStream.enqueue("data: [DONE]\n\n");
+  controlledStream.close();
+
+  await expect(sendPromise).resolves.toEqual({
+    assistantText: "Hari ini tanggal 3 Mei 2026.",
+    chatId: "chat-1",
+    refreshedChat: finalChat
+  });
+
+  expect(contentChunks).toEqual([
+    "<think>",
+    "I need to check the current timestamp.",
+    "</think>\n\n",
+    "Hari ini tanggal 3 Mei 2026."
+  ]);
+});
+
+test("sendPersistedMessage uses persisted tool output as the source of truth", async () => {
+  const controlledStream = createControlledStream();
+  const finalChat: ChatTree = {
+    id: "chat-1",
+    title: "Tool response",
+    currentId: "assistant-1",
+    messages: {
+      "assistant-1": {
+        id: "assistant-1",
+        role: "assistant",
+        content: "Final tool answer.",
+        done: true
+      }
+    }
+  };
+  const client = {
+    createChat: vi.fn(async () => ({ id: "chat-1" })),
+    updateChat: vi.fn(async () => ({ id: "chat-1" })),
+    streamChatCompletion: vi.fn(async () => controlledStream.stream),
+    triggerChatCompletion: vi.fn(() => new Promise<Record<string, unknown>>(() => undefined)),
+    getChat: vi.fn(async () => finalChat),
+    completeChat: vi.fn(async () => ({ ok: true }))
+  };
+  const contentChunks: string[] = [];
+  const delayResolvers: Array<() => void> = [];
+  const delay = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        delayResolvers.push(resolve);
+      })
+  );
+
+  const sendPromise = sendPersistedMessage({
+    client,
+    delay,
+    idGenerator: vi
+      .fn()
+      .mockReturnValueOnce("user-1")
+      .mockReturnValueOnce("assistant-1")
+      .mockReturnValueOnce("fallback-session-1"),
+    modelId: "openrouter/fast",
+    modelItem: { id: "openrouter/fast", name: "Fast" },
+    now: () => 1714528800000,
+    pollIntervalMs: 5,
+    pollMaxAttempts: 3,
+    prompt: "Use web search",
+    toolIds: ["web_search"],
+    onContent: (content) => contentChunks.push(content)
+  });
+  const observedSend = sendPromise.catch((error: unknown) => error);
+
+  await vi.waitFor(() => {
+    expect(client.streamChatCompletion).toHaveBeenCalled();
+  });
+  controlledStream.enqueue('data: {"choices":[{"delta":{"content":"I\\u0027ll search for information."}}]}\n\n');
+  await new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
+  expect(contentChunks).toEqual([]);
+  delayResolvers.shift()?.();
+
+  const result = await Promise.race([
+    observedSend,
+    new Promise<"timed-out">((resolve) => {
+      setTimeout(() => resolve("timed-out"), 50);
+    })
+  ]);
+  controlledStream.close();
+
+  expect(result).toEqual({
+    assistantText: "Final tool answer.",
+    chatId: "chat-1",
+    refreshedChat: finalChat
+  });
+  expect(contentChunks).toEqual(["Final tool answer."]);
+});
+
+test("sendPersistedMessage keeps polling tool runs when persisted content is reasoning-only", async () => {
+  const reasoningOnly =
+    "<think>The user asks today's date. I can use get_current_timestamp.</think>";
+  const finalText = `${reasoningOnly}\n\nHari ini tanggal 3 Mei 2026.`;
+  const reasoningChat: ChatTree = {
+    id: "chat-1",
+    title: "Timestamp",
+    currentId: "assistant-1",
+    messages: {
+      "assistant-1": {
+        id: "assistant-1",
+        role: "assistant",
+        content: reasoningOnly,
+        done: false
+      }
+    }
+  };
+  const finalChat: ChatTree = {
+    id: "chat-1",
+    title: "Timestamp",
+    currentId: "assistant-1",
+    messages: {
+      "assistant-1": {
+        id: "assistant-1",
+        role: "assistant",
+        content: finalText,
+        done: true
+      }
+    }
+  };
+  const client = {
+    createChat: vi.fn(async () => ({ id: "chat-1" })),
+    updateChat: vi.fn(async () => ({ id: "chat-1" })),
+    streamChatCompletion: vi.fn(async () => createPendingStream()),
+    triggerChatCompletion: vi.fn(() => new Promise<Record<string, unknown>>(() => undefined)),
+    getChat: vi
+      .fn()
+      .mockResolvedValueOnce(reasoningChat)
+      .mockResolvedValueOnce(reasoningChat)
+      .mockResolvedValueOnce(reasoningChat)
+      .mockResolvedValue(finalChat),
+    completeChat: vi.fn(async () => ({ ok: true }))
+  };
+  const contentChunks: string[] = [];
+
+  await expect(
+    sendPersistedMessage({
+      client,
+      delay: vi.fn(async () => undefined),
+      idGenerator: vi
+        .fn()
+        .mockReturnValueOnce("user-1")
+        .mockReturnValueOnce("assistant-1")
+        .mockReturnValueOnce("fallback-session-1"),
+      modelId: "minimax-m2.7:cloud",
+      modelItem: { id: "minimax-m2.7:cloud" },
+      now: () => 1777755600000,
+      pollIntervalMs: 5,
+      pollMaxAttempts: 5,
+      prompt: "hari ini tanggal berapa",
+      toolIds: ["get_current_timestamp"],
+      onContent: (content) => contentChunks.push(content)
+    })
+  ).resolves.toEqual({
+    assistantText: finalText,
+    chatId: "chat-1",
+    refreshedChat: finalChat
+  });
+
+  expect(client.getChat).toHaveBeenCalledTimes(5);
+  expect(contentChunks.join("")).toBe(finalText);
 });
 
 test("sendPersistedMessage streams flat realtime socket deltas instead of waiting for polling snapshots", async () => {
