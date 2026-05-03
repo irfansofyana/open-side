@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "Open WebUI",
+  "name": "OpenSide",
+  "short_name": "OpenSide",
   "version": "0.1.0",
-  "description": "Open WebUI Chrome extension shell.",
+  "description": "OpenSide browser companion for Open WebUI.",
   "permissions": ["sidePanel", "storage", "activeTab", "scripting", "tabs"],
   "optional_host_permissions": ["http://*/*", "https://*/*"],
   "background": {
@@ -13,6 +14,6 @@
     "default_path": "src/sidepanel/index.html"
   },
   "action": {
-    "default_title": "Open WebUI"
+    "default_title": "OpenSide"
   }
 }

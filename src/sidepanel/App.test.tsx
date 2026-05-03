@@ -219,6 +219,7 @@ test("ready state uses a focused chat shell with empty prompt shortcuts", async 
   render(<App restoreConnection={restoreConnection} />);
 
   expect(await screen.findByRole("heading", { name: "Ready" })).toBeInTheDocument();
+  expect(screen.getByText("OpenSide")).toBeInTheDocument();
   expect(screen.getByRole("region", { name: "Chat session" })).toBeInTheDocument();
   expect(screen.getByRole("log", { name: "Messages" })).toBeInTheDocument();
   expect(screen.getByText("Start a conversation")).toBeInTheDocument();

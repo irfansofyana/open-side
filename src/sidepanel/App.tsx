@@ -906,7 +906,7 @@ export function App({
       <header className="top-bar">
         <div className="brand-cluster">
           <span className="brand-mark" aria-hidden="true" />
-          <span className="brand-name">Open WebUI</span>
+          <span className="brand-name">OpenSide</span>
         </div>
         {connection ? <span className="server-chip">{connection.server.displayName}</span> : null}
         {connection ? (
@@ -1077,7 +1077,7 @@ export function App({
                 name="message"
                 onChange={(event) => setPrompt(event.target.value)}
                 onKeyDown={handleMessageKeyDown}
-                placeholder="Message Open WebUI"
+                placeholder="Message OpenSide"
                 rows={1}
                 value={prompt}
               />
@@ -1243,7 +1243,7 @@ export function App({
       ) : isRestoring ? (
         <section className="connection-panel restore-panel" aria-labelledby="restore-session-title">
           <div className="loading-ring" aria-hidden="true" />
-          <p className="eyebrow">Open WebUI</p>
+          <p className="eyebrow">OpenSide</p>
           <h1 id="restore-session-title">Restoring session</h1>
           <p className="server-name" role="status">
             Checking saved session...

@@ -1,8 +1,8 @@
-# Open WebUI Chrome Extension Technical Design
+# OpenSide Technical Design
 
 ## Purpose
 
-This document translates the MVP PRD into an implementation design for a Chrome Manifest V3 extension. The goal is to build a native side-panel Open WebUI client, not an iframe wrapper and not a generic OpenAI-compatible chat client.
+This document translates the MVP PRD into an implementation design for OpenSide, a Chrome Manifest V3 extension. The goal is to build a native side-panel Open WebUI client, not an iframe wrapper and not a generic OpenAI-compatible chat client.
 
 The design borrows the key lesson from Open Relay: high Open WebUI parity requires a dedicated Open WebUI compatibility layer that mirrors the web client's request lifecycle.
 
@@ -117,7 +117,7 @@ MVP permissions:
     "default_path": "sidepanel/index.html"
   },
   "action": {
-    "default_title": "Open WebUI"
+    "default_title": "OpenSide"
   }
 }
 ```

@@ -19,6 +19,8 @@ const sidePanelPath = manifest.side_panel?.default_path;
 const serviceWorkerPath = manifest.background?.service_worker;
 
 assert(manifest.manifest_version === 3, "manifest_version must be 3");
+assert(manifest.name === "OpenSide", "manifest.name must be OpenSide");
+assert(manifest.action?.default_title === "OpenSide", "action.default_title must be OpenSide");
 assert(typeof sidePanelPath === "string", "side_panel.default_path is missing");
 assert(typeof serviceWorkerPath === "string", "background.service_worker is missing");
 assert(existsSync(join(distDir, sidePanelPath)), `side panel file is missing: ${sidePanelPath}`);

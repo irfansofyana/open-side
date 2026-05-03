@@ -1,8 +1,8 @@
-# Open WebUI Chrome Extension PRD
+# OpenSide PRD
 
 ## Summary
 
-Build a Chrome Manifest V3 extension that brings an Open WebUI chat client into Chrome's side panel. The MVP should feel like a Gemini-style browser companion while using the user's own Open WebUI server for authentication, models, chats, history, and server-side tools.
+Build OpenSide, a Chrome Manifest V3 extension that brings an Open WebUI chat client into Chrome's side panel. The MVP should feel like a Gemini-style browser companion while using the user's own Open WebUI server for authentication, models, chats, history, and server-side tools.
 
 The extension is not a web wrapper. It is a native extension UI that talks to Open WebUI APIs.
 
