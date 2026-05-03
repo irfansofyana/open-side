@@ -1222,6 +1222,91 @@ test("sendPersistedMessage uses persisted tool output as the source of truth", a
   expect(contentChunks).toEqual(["Final tool answer."]);
 });
 
+test("sendPersistedMessage lets persisted output complete a pending native function calling stream", async () => {
+  const controlledStream = createControlledStream();
+  const finalChat: ChatTree = {
+    id: "chat-1",
+    title: "Native function calling",
+    currentId: "assistant-1",
+    messages: {
+      "assistant-1": {
+        id: "assistant-1",
+        role: "assistant",
+        content: "I don't have the ability to answer subjective questions like that.",
+        done: true
+      }
+    }
+  };
+  const client = {
+    createChat: vi.fn(async () => ({ id: "chat-1" })),
+    updateChat: vi.fn(async () => ({ id: "chat-1" })),
+    streamChatCompletion: vi.fn(async () => controlledStream.stream),
+    triggerChatCompletion: vi.fn(() => new Promise<Record<string, unknown>>(() => undefined)),
+    getChat: vi.fn(async () => finalChat),
+    completeChat: vi.fn(async () => ({ ok: true }))
+  };
+  const contentChunks: string[] = [];
+  const diagnostics = { log: vi.fn() };
+  const delayResolvers: Array<() => void> = [];
+  const delay = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        delayResolvers.push(resolve);
+      })
+  );
+  const observedSend = sendPersistedMessage({
+    client,
+    delay,
+    diagnostics,
+    idGenerator: vi
+      .fn()
+      .mockReturnValueOnce("user-1")
+      .mockReturnValueOnce("assistant-1")
+      .mockReturnValueOnce("fallback-session-1"),
+    modelId: "anthropic/claude-haiku-4.5",
+    modelItem: {
+      id: "anthropic/claude-haiku-4.5",
+      params: { function_calling: "native" }
+    },
+    now: () => 1714528800000,
+    pollIntervalMs: 5,
+    pollMaxAttempts: 3,
+    prompt: "who is the most sexy woman in the world",
+    onContent: (content) => contentChunks.push(content)
+  });
+
+  await vi.waitFor(() => {
+    expect(client.streamChatCompletion).toHaveBeenCalled();
+  });
+  controlledStream.enqueue(
+    'data: {"choices":[{"delta":{"content":"I don\\u0027t have the ability to answer subjective questions like that"}}]}\n\n'
+  );
+  await vi.waitFor(() => {
+    expect(diagnostics.log).toHaveBeenCalledWith("chat.stream.event", expect.objectContaining({
+      contentLength: expect.any(Number),
+      source: "http",
+      type: "content"
+    }));
+  });
+  delayResolvers.splice(0).forEach((resolve) => resolve());
+
+  await expect(
+    Promise.race([
+      observedSend,
+      new Promise<"timed-out">((resolve) => {
+        setTimeout(() => resolve("timed-out"), 50);
+      })
+    ])
+  ).resolves.toEqual({
+    assistantText: "I don't have the ability to answer subjective questions like that.",
+    chatId: "chat-1",
+    refreshedChat: finalChat
+  });
+  expect(contentChunks).toEqual([
+    "I don't have the ability to answer subjective questions like that."
+  ]);
+});
+
 test("sendPersistedMessage keeps polling tool runs when persisted content is reasoning-only", async () => {
   const reasoningOnly =
     "<think>The user asks today's date. I can use get_current_timestamp.</think>";

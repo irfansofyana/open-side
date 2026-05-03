@@ -1,6 +1,7 @@
 import {
   buildCompletionPayload,
-  buildOpenWebUIPromptVariables
+  buildOpenWebUIPromptVariables,
+  isOpenWebUINativeFunctionCallingModel
 } from "../openwebui/requestBuilders";
 import { parseOpenWebUIRealtimeEvent, readStreamEvents } from "../openwebui/stream";
 import { normalizeCitationSources } from "../openwebui/citations";
@@ -1090,6 +1091,7 @@ export async function sendPersistedMessage({
   const usesServerToolsOrFeatures =
     (payloadInput.toolIds?.length ?? 0) > 0 ||
     (payloadInput.filterIds?.length ?? 0) > 0 ||
+    isOpenWebUINativeFunctionCallingModel(payloadInput.modelItem) ||
     Object.values(payloadInput.features ?? {}).some((value) => value === true);
   let unsubscribeRealtime: (() => void) | undefined;
   let resolveRealtimeDone: () => void = () => undefined;
